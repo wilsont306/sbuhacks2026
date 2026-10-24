@@ -134,28 +134,79 @@ function swapTex(key, tex) {
   if (old && old !== blank && old !== noLines && old !== tex) old.dispose();
 }
 
-// Where a figure can walk to: every stop's object outlined in ink with a paper edge (so the line reads on dark paint
-// too), drawn once per scene at the picture's own resolution. Far objects first, each one erasing what it covers
-// before its own line is drawn, so a line never runs across an object in front of it (objectIdMap's order).
-function outlineTexture(s, stopList, aspect) {
+// ---------- the stops, shown on the stage ----------
+// Where a figure can walk to: a numbered enamel marker on the path at each stop (the left margin numbers its stops
+// the same). The object a figure stands at is outlined in that rider's colour, with an ink edge each side so it reads
+// on pale paper and dark paint, over a light wash of its region so a big one reads as a region (the sky) and a tiny
+// one gets a ring (the hare). Drawn into a texture the relief lays over the picture, only when who stands where
+// changes. Far objects first, each erasing what it covers, so a line never crosses an object in front of it.
+const LINES_LONG = 1024, SMALL = 90; // the outline texture's long side; a box under 90 of 1000 on both sides is circled
+let lines = null, linesKey = '';
+const markers = [];
+function linesFor(aspect) {
   const c = document.createElement('canvas');
-  c.width = Math.round(aspect >= 1 ? MAX_TEX : MAX_TEX * aspect); c.height = Math.round(aspect >= 1 ? MAX_TEX / aspect : MAX_TEX);
-  const g = c.getContext('2d'), k = Math.max(c.width, c.height) / 2048, ink = tok('--ink'), paper = tok('--paper');
-  const isStop = new Set(stopList.map((st) => st.index));
+  c.width = Math.round(aspect >= 1 ? LINES_LONG : LINES_LONG * aspect); c.height = Math.round(aspect >= 1 ? LINES_LONG / aspect : LINES_LONG);
+  return { c, tex: new THREE.CanvasTexture(c) };
+}
+function stepLines() {
+  if (!lines || !current) return;
+  const who = new Map(); // object index -> the first rider's colour there
+  for (const f of players.values()) if (f.near != null && !who.has(f.near)) who.set(f.near, f.color);
+  const key = [...who].map((e) => e.join(':')).sort().join('|');
+  if (key === linesKey) return;
+  linesKey = key;
+  const { c } = lines, g = c.getContext('2d'), k = Math.max(c.width, c.height) / 2048, ink = tok('--ink');
   // A point on the picture's edge goes past it, so the sky's or a river's border draws no frame round the picture.
-  const at = (v, size) => (v <= 0.5 ? -12 * k : v >= 999.5 ? size + 12 * k : v / 1000 * size);
+  const edge = (v, size) => (v <= 0.5 ? -24 * k : v >= 999.5 ? size + 24 * k : v / 1000 * size);
+  g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.clearRect(0, 0, c.width, c.height);
   g.lineJoin = 'round';
-  for (const { index, pts } of objectOutlines(s)) {
+  for (const { index, pts } of objectOutlines(current)) {
     g.beginPath();
-    pts.forEach(([x, y], i) => g[i ? 'lineTo' : 'moveTo'](at(x, c.width), at(y, c.height)));
+    pts.forEach(([x, y], i) => g[i ? 'lineTo' : 'moveTo'](edge(x, c.width), edge(y, c.height)));
     g.closePath();
     g.globalCompositeOperation = 'destination-out'; g.globalAlpha = 1; g.fill();
-    if (!isStop.has(index)) continue;
+    const color = who.get(index);
+    if (!color) continue;
     g.globalCompositeOperation = 'source-over';
-    g.strokeStyle = paper; g.globalAlpha = 0.7; g.lineWidth = 10 * k; g.stroke();
-    g.strokeStyle = ink; g.globalAlpha = 1; g.lineWidth = 4 * k; g.stroke();
+    g.fillStyle = color; g.globalAlpha = 0.16; g.fill();
+    g.globalAlpha = 1;
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]), bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+    if (bw < SMALL && bh < SMALL) { // too small to see by its outline: a ring round it too
+      g.beginPath();
+      g.arc((Math.max(...xs) + Math.min(...xs)) / 2000 * c.width, (Math.max(...ys) + Math.min(...ys)) / 2000 * c.height,
+        Math.max(bw / 1000 * c.width, bh / 1000 * c.height) * 0.75 + 28 * k, 0, Math.PI * 2);
+    }
+    g.strokeStyle = ink; g.lineWidth = 15 * k; g.stroke();
+    g.strokeStyle = color; g.lineWidth = 7 * k; g.stroke();
   }
-  return new THREE.CanvasTexture(c);
+  lines.tex.needsUpdate = true;
+}
+function drawMarker(sp) {
+  const c = sp.material.map.image, g = c.getContext('2d');
+  c.width = c.height = 128;
+  g.beginPath(); g.arc(64, 64, 54, 0, Math.PI * 2);
+  g.fillStyle = tok('--cream'); g.fill();
+  g.lineWidth = 10; g.strokeStyle = tok('--livery'); g.stroke();
+  g.fillStyle = tok('--livery'); g.font = '600 62px "Libre Franklin", Arial, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(sp.userData.n), 64, 68);
+  sp.material.map.needsUpdate = true;
+}
+function setMarkers(list) {
+  for (const sp of markers) { scene.remove(sp); sp.material.map.dispose(); sp.material.dispose(); }
+  markers.length = 0;
+  list.forEach((st, i) => {
+    const tex = new THREE.CanvasTexture(document.createElement('canvas'));
+    tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+    sp.center.set(0.5, 0.2); sp.renderOrder = 20; // under every figure (their order is 50 and up)
+    Object.assign(sp.userData, { n: i + 1, stop: st });
+    drawMarker(sp); scene.add(sp); upload(tex); markers.push(sp);
+  });
+  placeMarkers();
+}
+// On the path at its stop (the overlay can drag a stop, so its t is read each step), sized like a figure there.
+function placeMarkers() {
+  for (const sp of markers) { const t = sp.userData.stop.t, h = figH(t) * 0.3; at(t, 0.012, sp.position); sp.scale.set(h, h, 1); }
 }
 
 function loadImage(url) {
@@ -200,10 +251,12 @@ function build(tex, aspect, d, ids, points, newStops) {
   swapTex('map', tex);
   swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
   swapTex('idMap', idTexture(ids));
-  swapTex('outline', current && newStops.length ? outlineTexture(current, newStops, aspect) : noLines);
+  lines = current && newStops.length ? linesFor(aspect) : null; linesKey = null; // drawn on the next step
+  swapTex('outline', lines ? lines.tex : noLines);
   depth = d; sample = sampler(d); stops = newStops; depthFromAi = false;
   if (notice === NO_IMAGE) notice = '';
   setPath({ image: imageUrl, points, plaques: stops });
+  setMarkers(stops);
   glow.fill(0);
   for (const [pid, f] of players) {
     f.t = startT(pid); f.facing = 1; // as reset() does: an inside phone takes its heading from this
@@ -440,8 +493,9 @@ function step() {
   else if (attract.on && judge) stopAttract();
   attract.lean = attract.on && !reduced ? Math.sin(simTime / 4) * 5 : 0;
   uniforms.amp.value += ((layer === 'exploded' ? AMP * EXPLODE : AMP) - uniforms.amp.value) * EASE_AMP;
-  stepGlow();
+  stepGlow(); stepLines();
   for (const f of players.values()) place(f);
+  placeMarkers();
   aimCamera(); stepCamera(STEP); arrangeTags();
 }
 
@@ -542,4 +596,5 @@ loadSheets().then((s) => {
 });
 document.fonts?.load('600 56px "Libre Franklin"').then(() => {
   for (const sp of [...players.values()].map((f) => f.tag).filter(Boolean)) { drawLabel(sp); upload(sp.material.map); }
+  for (const sp of markers) { drawMarker(sp); upload(sp.material.map); }
 }, () => {});
