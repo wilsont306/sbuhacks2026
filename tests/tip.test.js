@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   EYE, horizonRow, paintingCamera, rayAt, project, imageToFloor, rowDistance, planePoint, uvToFloor, uvToImage, padBox, flatOf, extentOf,
-  fitDepth, distanceAt, fillDepth, flatDistance, reliefGrid, terrainPath, sampleDepth, shapeOf,
+  fitDepth, distanceAt, fillDepth, flatDistance, reliefGrid, terrainPath, sampleDepth, shapeOf, walkSign,
 } from '../src/world/tip.js';
 import { validateScene } from '../src/shared/scene-validate.js';
 import { pathPoints } from '../src/host/maskDepth.js';
@@ -355,4 +355,37 @@ test('degenerate depth never throws and falls back', () => {
   assert.equal(reliefGrid(cam, null, { data: new Uint8Array(w * h), w, h }), null, 'no fit');
   const tiny = reliefGrid(cam, { a: 1, b: 0, near: 1, far: 9 }, { data: new Uint8Array(4), w: 2, h: 2 });
   assert.ok(tiny && tiny.position.every(Number.isFinite), 'a 2 by 2 depth still makes a relief');
+});
+
+test('walkSign: Walk goes the path way nearer the look, switching only 15 degrees past perpendicular', () => {
+  const sign = (deg, cur) => walkSign(Math.cos(deg * Math.PI / 180), Math.sin(deg * Math.PI / 180), 1, 0, cur, 15); // deg from +t
+  for (const cur of [1, -1, 0, null, undefined]) {
+    assert.equal(sign(0, cur), 1, `along +t from ${cur}`);
+    assert.equal(sign(180, cur), -1, `along -t from ${cur}`);
+  }
+  assert.equal(sign(100, 1), 1, 'just past sideways keeps +1');
+  assert.equal(sign(-104, 1), 1, 'on either side');
+  assert.equal(sign(106, 1), -1, 'past 105 switches');
+  assert.equal(sign(-106, 1), -1, 'past 105 switches on either side');
+  assert.equal(sign(80, -1), -1, 'from -1, 80 degrees keeps -1');
+  assert.equal(sign(74, -1), 1, 'under 75 switches back');
+  assert.equal(sign(91, 0), -1, 'no current: the nearer side');
+  assert.equal(sign(89, null), 1, 'no current: the nearer side');
+  // any tangent, any lengths: only the angle counts
+  assert.equal(walkSign(0, -3, 0, 0.2, 1, 15), -1, 'opposite, unnormalised');
+  assert.equal(walkSign(-0.6, -0.8, -6, -8, -1, 15), 1, 'along a slanted tangent');
+  assert.equal(walkSign(1, 0.1, 1, 0, -1, 0), 1, 'no hysteresis: just the nearer');
+  // nothing to go on keeps what it had
+  for (const v of [[0, 0, 1, 0], [1, 0, 0, 0], [NaN, 1, 1, 0], [1, 0, Infinity, 0]]) {
+    assert.equal(walkSign(v[0], v[1], v[2], v[3], -1, 15), -1, `${v} keeps -1`);
+    assert.equal(walkSign(v[0], v[1], v[2], v[3], null, 15), 1, `${v} with no current`);
+  }
+  // a look swept slowly round and back flips once each way, past 105 out and under 75 back: no flicker between
+  let cur = 1;
+  const flips = [];
+  const sweep = (from, to, step) => {
+    for (let d = from; step > 0 ? d <= to : d >= to; d += step) { const n = sign(d, cur); if (n !== cur) { flips.push([d, n]); cur = n; } }
+  };
+  sweep(0.25, 179.75, 0.5); sweep(179.75, 0.25, -0.5); // off the exact boundary, where rounding decides
+  assert.deepEqual(flips, [[105.25, -1], [74.75, 1]]);
 });

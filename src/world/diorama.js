@@ -153,26 +153,6 @@ function disposeTree(root) {
   });
 }
 
-// Gentle motion by kind, as an offset from the flat's rest pose (k quarters it for reduced motion). Bobbing and flying
-// only ever rise, so nothing sinks through the floor.
-function animate(fl, time, k) {
-  const a = time + fl.phase, h = fl.height;
-  let x = 0, y = 0, rz = 0, glow = 0;
-  switch (fl.motion) {
-    case 'sway': rz = 0.035 * Math.sin(1.3 * a); break;
-    case 'drift': x = 0.05 * h * Math.sin(0.4 * a); break;
-    case 'bob': y = 0.03 * h * (1 + Math.sin(2 * a)); break;
-    case 'spin': x = 0.03 * h * Math.cos(1.2 * a); y = 0.03 * h * (1 + Math.sin(1.2 * a)); break;
-    case 'fly': x = 0.08 * h * Math.sin(0.8 * a); y = h * (0.06 + 0.04 * Math.sin(1.6 * a)); break;
-    case 'flicker': glow = 0.12 * (0.6 * Math.sin(13 * a) + 0.4 * Math.sin(7.7 * a)); break;
-    case 'twinkle': glow = 0.15 * (0.5 + 0.5 * Math.sin(3 * a)); break;
-    default: break;
-  }
-  fl.pivot.position.set(fl.rest.x + x * k, fl.rest.y + y * k, fl.rest.z);
-  fl.pivot.rotation.z = rz * k;
-  fl.material.uniforms.uGlow.value = glow * k;
-}
-
 // scene: a validated scene (validated again here). texture: the painting (THREE.Texture, flipY as THREE loads it); the
 // caller owns it, dispose() leaves it alone. opts.aspect: the picture's width / height, else read from the texture.
 // opts.depth: an optional depth picture, {data: Uint8Array, w, h} (README, Inside view).
@@ -207,7 +187,7 @@ export function buildDiorama(scene, texture, opts) {
     let at;
     if (f) {
       at = v3(f.foot);
-      flats.push({ index, ob, f, padded, motion: ob.motion, height: f.height, phase: index * 1.7 });
+      flats.push({ index, ob, f, padded, height: f.height });
     } else if (FLOOR_KINDS.indexOf(ob.kind) >= 0) {
       at = v3(imageToFloor(cam, cx, clamp(cy, cam.wallRow + 1, 1000)));
     } else {
@@ -251,7 +231,6 @@ export function buildDiorama(scene, texture, opts) {
     fl.pivot = new THREE.Group();
     fl.pivot.position.set(f.foot[0], f.foot[1], f.foot[2] + fl.index * 0.002); // flats sharing a foot row never z-fight
     fl.pivot.updateMatrix();
-    fl.rest = fl.pivot.position.clone();
     const geo = new THREE.PlaneGeometry(f.right - f.left, f.height);
     geo.translate((f.left + f.right) / 2, f.height / 2, 0);
     const box = new THREE.Vector4(padded[0] / 1000, 1 - padded[3] / 1000, padded[2] / 1000, 1 - padded[1] / 1000); // UV, bottom-up
@@ -276,12 +255,9 @@ export function buildDiorama(scene, texture, opts) {
     return { position: floorAt(tt), forward };
   }
 
-  let time = 0, disposed = false;
-  function update(dt, reducedMotion) {
-    if (disposed) return;
-    time += clamp(fin(dt) ? dt : 0, 0, 0.1);
-    for (const fl of flats) animate(fl, time, reducedMotion ? 0.25 : 1);
-  }
+  let disposed = false;
+  // Still pictures: no flat or model moves (the per-kind motion read as cut-outs warping); kept for the API's shape.
+  function update() {}
 
   // A model stands in for its flat: turned by MODEL_YAW to face the painting camera, centred on the flat's footprint,
   // scaled to the flat's height with its feet on the flat's foot. Resolves true once it stands; any failure keeps the

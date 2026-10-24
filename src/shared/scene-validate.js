@@ -5,7 +5,7 @@
 export const KINDS = ['sky', 'cloud', 'celestial', 'water', 'ground', 'plant', 'building', 'vehicle', 'animal', 'person', 'fire', 'object'];
 export const MOTIONS = ['none', 'sway', 'drift', 'bob', 'spin', 'fly', 'flicker', 'twinkle'];
 export const SOURCES = ['drop', 'phone', 'sample'];
-export const LIMITS = Object.freeze({ objects: 8, maskPoints: 24, pathPoints: 8, palette: 5, label: 40, soundWords: 12, guess: 120 });
+export const LIMITS = Object.freeze({ objects: 8, maskPoints: 24, pathPoints: 8, palette: 5, label: 40, soundWords: 12, guess: 120, description: 240 });
 export const FLAT_PATH = Object.freeze([Object.freeze([0, 850]), Object.freeze([1000, 850])]);
 
 // A mask below this area (image units squared, of 1e6) or below this share of its box is noise, not an outline.
@@ -35,6 +35,14 @@ function text(v, max) {
 }
 
 const words = (v, n, max) => text(v, 400).split(' ').filter(Boolean).slice(0, n).join(' ').slice(0, max).trim();
+
+// One line of at most max characters; a longer one is cut back to its last whole word (a hard cut for one long word).
+function prose(v, max) {
+  const s = text(v, max * 4);
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf(' ', max);
+  return (cut > 0 ? s.slice(0, cut) : s.slice(0, max)).trim();
+}
 
 function iso(v) {
   const t = v instanceof Date ? v.getTime() : typeof v === 'string' ? Date.parse(v) : NaN;
@@ -143,6 +151,8 @@ function objectOf(o, maskFrame, palette, index) {
     motion: pick(o.motion, MOTIONS, 'none'),
     sound_prompt: words(o.sound_prompt, LIMITS.soundWords, 120),
   };
+  const description = prose(o.description, LIMITS.description);
+  if (description) out.description = description;
   const model = assetUrl(o.model_url);
   if (model) out.model_url = model;
   return out;
@@ -239,8 +249,9 @@ export const sceneJsonSchema = {
           colour: { type: 'string', description: '#rrggbb' },
           motion: { type: 'string', enum: MOTIONS },
           sound_prompt: { type: 'string' },
+          description: { type: 'string', description: '1-2 plain sentences, at most 220 characters' },
         },
-        required: ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt'],
+        required: ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description'],
       },
     },
   },

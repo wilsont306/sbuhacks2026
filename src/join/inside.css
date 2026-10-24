@@ -53,6 +53,12 @@
 .in-verb { flex: 0 1 420px; min-width: 0; min-height: 72px; margin: 0 8px; padding: 8px 10px; font-size: 18px; line-height: 1.15; overflow-wrap: break-word; }
 .in-verb[aria-disabled="true"] { background: var(--vignette); }
 
+/* the verb's answer (join.css's .desc card) floats above Walk, the verb and Turn around */
+.in-desc {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 112px); width: calc(100% - 32px); max-width: 420px;
+  max-height: 45%; box-shadow: var(--shadow-lift); transform: translateX(-50%);
+}
+
 body.inside #toast { z-index: 6; bottom: 104px; } /* above Walk, Turn around and the verb */
 body.inside #banner { z-index: 6; }
 body.inside #resting { position: relative; z-index: 6; }

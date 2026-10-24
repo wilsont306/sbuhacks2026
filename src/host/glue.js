@@ -1,7 +1,7 @@
 // Host glue: the relay socket, the seats (src/host/slots.js), the player manager, the phones' panel kinds ('original',
 // 'artwork', 'inside', and 'look', which is activity only: panel() stamps lastActive for every kind; decided here and
 // only here, the host never trusts a phone), the scene's hotspot events (near,
-// poke, layer, scene) relayed to phones, audio and margins, the inside phones' world and pos (on change, else every 3 s), the right margin
+// describe, layer, scene) relayed to phones, audio and margins, the inside phones' world and pos (on change, else every 3 s), the right margin
 // (#roster, #hud, #qr, #resting) and the operator keys
 // H, J, R, Q. It inits audio.js, margins.js and artwork.js. main.js imports scene.js first, so window.game already exists.
 import qrcode from 'qrcode-generator';
@@ -103,6 +103,14 @@ export function posMsg(pid, figures, who) {
     others: figures.filter((f) => f.pid !== pid && who.has(f.pid))
       .map((f) => ({ pid: f.pid, t: r(f.t), facing: f.facing, color: who.get(f.pid).color, name: who.get(f.pid).name })),
   };
+}
+
+// The verb's answer at an object: its label and its description (whitespace collapsed, at most 240 characters),
+// or a plain line when the reading has none.
+export const NO_DESCRIPTION = 'No description for this one yet.';
+export function describeMsg(label, description) {
+  const text = typeof description === 'string' ? description.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
+  return { t: 'describe', label: typeof label === 'string' ? label : null, text: text || NO_DESCRIPTION };
 }
 /* pure:end */
 
@@ -319,9 +327,11 @@ game.onHotspot((e) => {
     const p = players.get(e.pid);
     if (p) p.near = label;
     tell(e.pid, { t: 'near', label });
-  } else if (e?.type === 'poke') {
-    audio.play('poke', { label, kind: e.kind, sound_prompt: e.sound_prompt });
-    readout(e.pid, 'You poked the ' + (label || 'object'));
+  } else if (e?.type === 'describe') { // the verb at an object (pid 0, the keyboard, has no phone to tell)
+    const msg = describeMsg(label, e.description);
+    audio.play('describe', { label, kind: e.kind });
+    margins.showDescription(msg.label, msg.text);
+    tell(e.pid, msg);
   } else if (e?.type === 'layer') margins.showPlatforms(e.name === 'network');
   else if (e?.type === 'scene' || e?.type === 'enriched') { // enriched: a depth_url or model_url landed on this scene
     const msg = worldMsg(game.scene()), json = JSON.stringify(msg);

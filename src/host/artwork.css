@@ -3,7 +3,7 @@
    a chocolate-and-cream carriage with gold lining, its picture hung inside a window; the shelves are two trains on
    their tracks, today's pulled by a locomotive that is also the "Add a picture" button. The chosen carriage's lamp
    comes on and the picture stands up in 3D through the window: it sinks, and every object Gemini outlined lifts off
-   as a die-cut flat at its depth guess, moving the way it moves on the stage. Brass marks the focused item and the
+   as a die-cut flat at its depth guess, and holds still there. Brass marks the focused item and the
    primary action. Tokens only; TV type 28 px, nothing under 20 px. */
 .art-gallery, .art-detail, .art-board {
   position: absolute; inset: 0; color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
@@ -144,7 +144,6 @@
   transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
   transition: transform 600ms cubic-bezier(.2, .8, .2, 1);
 }
-.selected .art-tilt { animation: art-breathe 7s ease-in-out 700ms infinite; }
 .selected .art-plate { transform: rotateX(var(--rx, 12deg)) rotateY(var(--ry, -20deg)); }
 
 /* The back flat: the picture, which sinks and dims while the cut-outs lift; under each cut-out, the blueprint. */
@@ -176,16 +175,8 @@
   filter: drop-shadow(0 0 .6px var(--paper)) drop-shadow(0 0 .6px var(--paper))
     drop-shadow(calc(var(--z) * .14) calc(var(--z) * .22) calc(var(--z) * .12) var(--vignette));
 }
+/* Still: a lifted cut-out stands at its depth and never sways, drifts or flickers. */
 .art-cut { position: absolute; inset: 0; background-size: 100% 100%; }
-/* A lifted cut-out moves the way it moves on the stage: every one on a chosen carriage, the pointed-at one in the sidebar. */
-:is(.selected[data-peek="ready"], .art-lift.hot) .art-cut { animation: none 1s ease-in-out 700ms infinite; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="sway"] { animation-name: art-sway; animation-duration: 3.5s; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="drift"] { animation-name: art-drift; animation-duration: 7s; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="bob"] { animation-name: art-bob; animation-duration: 2.6s; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="spin"] { animation-name: art-spin; animation-duration: 6s; animation-timing-function: linear; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="fly"] { animation-name: art-fly; animation-duration: 5s; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="flicker"] { animation-name: art-flicker; animation-duration: .45s; }
-:is(.selected[data-peek="ready"], .art-lift.hot) [data-motion="twinkle"] { animation-name: art-twinkle; animation-duration: 2.2s; }
 
 /* While peeking, a tag in the window band says what the layers are. */
 .art-peekline {
@@ -299,9 +290,8 @@
   background: color-mix(in srgb, var(--lamp) 40%, var(--livery-deep));
 }
 /* Flat until pointed at: then that part (and only it) lifts out, casts its shadow and leaves its blueprint gap, while
-   the rest of the picture dims a little behind it. */
-.art-detail-view .art-cut, .art-zone { pointer-events: auto; cursor: help; }
-.art-zone { position: absolute; inset: 0; }
+   the rest of the picture dims a little behind it. artwork.js finds the part on the flat picture, so no layer here
+   takes the pointer; a part with no cut-out gets its blueprint outline (.art-outline) instead. */
 .art-detail-view .art-base { transition: filter 300ms; }
 .art-detail-view .has-hot .art-base { filter: brightness(.78) saturate(.85); }
 .art-detail-view .art-hole.hot { opacity: .94; transition-delay: 0s; }
@@ -311,7 +301,7 @@
     drop-shadow(calc(var(--z) * .14 + 8px) calc(var(--z) * .22 + 12px) calc(var(--z) * .12 + 8px) var(--vignette));
 }
 .art-detail-tip {
-  position: absolute; z-index: 3; transform: translate(16px, -130%); pointer-events: none; padding: 2px 16px 4px;
+  position: absolute; z-index: 3; transform: translateY(-130%); pointer-events: none; padding: 2px 16px 4px;
   border-radius: var(--radius-pill); background: var(--livery); color: var(--cream); box-shadow: var(--shadow-card);
   font: 400 28px/1.25 var(--font-display); white-space: nowrap;
 }
@@ -449,14 +439,6 @@
 @keyframes art-slide { from { transform: translateX(100%); } to { transform: none; } }
 @keyframes art-roll { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: none; } }
 @keyframes art-puff { 0% { opacity: 0; transform: translate(0, 10px) scale(.6); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(26px, -16px) scale(1.3); } }
-@keyframes art-breathe { 0%, 100% { transform: rotateY(0deg); } 50% { transform: rotateY(9deg); } }
-@keyframes art-sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
-@keyframes art-drift { 0%, 100% { transform: translateX(-4%); } 50% { transform: translateX(4%); } }
-@keyframes art-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3%); } }
-@keyframes art-spin { from { transform: rotate(0deg) translateX(1.5%) rotate(0deg); } to { transform: rotate(360deg) translateX(1.5%) rotate(-360deg); } }
-@keyframes art-fly { 0%, 100% { transform: translate(-4%, 0); } 25% { transform: translate(0, -2%); } 50% { transform: translate(4%, 0); } 75% { transform: translate(0, 2%); } }
-@keyframes art-flicker { 0%, 100% { filter: brightness(1); } 35% { filter: brightness(1.35); } 70% { filter: brightness(.9); } }
-@keyframes art-twinkle { 0%, 80%, 100% { filter: brightness(1); } 90% { filter: brightness(1.8); } }
 
 .art-drop {
   position: absolute; inset: var(--space-3); z-index: 9; display: grid; place-items: center; pointer-events: none;

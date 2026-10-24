@@ -136,3 +136,11 @@ test('learning.json is the empty receipts file the overlay expects', () => {
   assert.ok(Array.isArray(json.entries));
   assert.equal(m.learningEntries(json).length, json.entries.length);
 });
+
+test('describeCard: the label and the description on one line each, capped', () => {
+  assert.deepEqual(m.describeCard(' old\noak ', 'A tree,\n  painted in two greens.'), { label: 'old oak', text: 'A tree, painted in two greens.' });
+  assert.deepEqual(m.describeCard(null, 'Text.'), { label: 'Object', text: 'Text.' });
+  assert.equal(m.describeCard('x'.repeat(60), '').label.length, 40);
+  assert.equal(m.describeCard('sky', 'y'.repeat(300)).text.length, 240);
+  assert.equal(m.describeCard('sky', 42).text, ''); // nothing to show: the card stays hidden
+});

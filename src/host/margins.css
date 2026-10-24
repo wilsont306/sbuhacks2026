@@ -1,4 +1,4 @@
-/* What margins.js draws: the AI wall label (#label) and object legend (#legend) in the left margin, the source block
+/* What margins.js draws: the AI wall label (#label), description card (#describe) and object legend (#legend) in the left margin, the source block
    (#source: flash, saved badge, data-use notice, thumbnail) in the right margin, and the platform panel (#platforms)
    and Learning overlay (#learning) on the stage. Margin text is 22 px or more where it fits (small print 18 to 20 px);
    the stage overlays keep 28 px, for 3 m. Tokens only. */
@@ -16,7 +16,20 @@
 }
 #label .credit { -webkit-line-clamp: 4; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule-ink); font: 400 18px/1.3 var(--font-ui); color: var(--ink-soft); }
 #label .labels-note { display: none; font: 400 20px/1.25 var(--font-ui); color: var(--ink-soft); }
-#tv.labels-off #label .ai, #tv.labels-off #legend { display: none; }
+#tv.labels-off #label .ai, #tv.labels-off #legend, #tv.labels-off #describe { display: none; }
+
+/* The description card (showDescription, 10 s): a hairline card under the label, in place of the legend while it
+   shows. On a very crowded margin the card's last lines give way (its title keeps the text); the roster never does. */
+#describe:not([hidden]) ~ #legend { display: none; }
+#describe {
+  flex: 0 1 auto; min-height: 0; overflow: hidden; padding: 10px 12px;
+  border: 1px solid var(--rule-frame); border-radius: var(--radius-card); background: var(--card-frame);
+  animation: tt-fade var(--fade) ease-out;
+}
+#describe p, #describe h2 { margin: 0; overflow-wrap: anywhere; }
+#describe .kicker { font: 400 18px/1.25 var(--font-mono); font-variant-caps: all-small-caps; letter-spacing: .06em; color: var(--muted); }
+#describe h2 { margin: 2px 0 6px; font: 400 28px/1.15 var(--font-display); color: var(--frame-ink); }
+#describe .text { font: 400 20px/1.3 var(--font-ui); color: var(--cream); }
 #tv.labels-off #label .labels-note { display: block; }
 
 /* The legend: a tidy list, the label in UI type and its kind in mono small caps. A whole item that does not fit

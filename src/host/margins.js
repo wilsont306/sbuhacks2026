@@ -1,5 +1,5 @@
-// The TV's margins and overlays (README contract F): the AI wall label (#label) and the object legend in the left
-// margin; the source thumbnail, data-use notice, saved badge and sound flash in the right margin; the platform panel
+// The TV's margins and overlays (README contract F): the AI wall label (#label), the description card (#describe)
+// and the object legend in the left margin; the source thumbnail, data-use notice, saved badge and sound flash in the right margin; the platform panel
 // over the stage bottom (the W 'network' layer); the L Learning overlay; X hides the AI labels. glue.js calls init.
 // Every string from a scene reaches the page through textContent only.
 import learning from '../shared/learning.json';
@@ -72,6 +72,9 @@ export function platformLines({ hub, scene, saved, id, audio, depth, models } = 
   ];
 }
 
+// The description card under the wall label: the object's label and its description, cleaned for display.
+export const describeCard = (label, text) => ({ label: str(label, 40) || 'Object', text: str(text, 240) });
+
 // learning.json entries with a who and a text, cleaned for display, in file order.
 export function learningEntries(json) {
   const list = json && Array.isArray(json.entries) ? json.entries : [];
@@ -80,12 +83,12 @@ export function learningEntries(json) {
 }
 /* pure:end */
 
-const FLASH_MS = 2000, PLATFORM_TICK_MS = 1000;
+const FLASH_MS = 2000, PLATFORM_TICK_MS = 1000, DESCRIBE_MS = 10000;
 
 const h = (tag, cls, ...kids) => { const el = document.createElement(tag); if (cls) el.className = cls; el.append(...kids); return el; };
 
 let els = null, scene = null, saved = 'unsaved', projectId = '', hub = null, audioStats = () => ({}), depthStats = () => ({}), modelStats = () => ({});
-let flashT = 0, platformT = 0;
+let flashT = 0, platformT = 0, describeT = 0;
 
 export function init(opts = {}) {
   if (typeof opts.audioStats === 'function') audioStats = opts.audioStats;
@@ -101,6 +104,9 @@ export function init(opts = {}) {
   const legend = h('section', ''); legend.id = 'legend'; legend.hidden = true;
   const roster = document.getElementById('roster');
   left.insertBefore(legend, roster && roster.parentNode === left ? roster : null);
+  const describe = h('section', ''); describe.id = 'describe'; describe.hidden = true;
+  describe.setAttribute('aria-live', 'polite');
+  left.insertBefore(describe, legend);
 
   const flashEl = h('p', 'flash'); flashEl.setAttribute('role', 'status'); flashEl.hidden = true;
   const thumb = h('img', 'thumb'); thumb.alt = 'The source picture'; thumb.hidden = true;
@@ -117,7 +123,7 @@ export function init(opts = {}) {
   const learn = h('section', ''); learn.id = 'learning'; learn.hidden = true; learn.setAttribute('aria-label', 'Learning');
   stage.append(platforms, learn);
 
-  els = { tv, label, legend, flash: flashEl, thumb, badge, platforms, platformList, learning: learn };
+  els = { tv, label, legend, describe, flash: flashEl, thumb, badge, platforms, platformList, learning: learn };
   renderLearning();
   renderScene();
 
@@ -134,6 +140,7 @@ export function setScene(s, opts = {}) {
   scene = s && typeof s === 'object' ? s : null;
   projectId = scene ? str(scene.id, 128) : '';
   saved = opts && opts.saved ? opts.saved : scene && scene.source === 'sample' ? 'sample' : 'unsaved';
+  if (els) els.describe.hidden = true; // the last scene's object
   renderScene();
 }
 
@@ -164,6 +171,18 @@ export function flash(text) {
   els.flash.hidden = !els.flash.textContent;
   clearTimeout(flashT);
   flashT = setTimeout(() => { els.flash.hidden = true; }, FLASH_MS);
+}
+
+// The object a figure asked about, under the wall label for 10 s; the latest replaces the previous.
+export function showDescription(label, text) {
+  if (!els) return;
+  const c = describeCard(label, text);
+  // The samples' descriptions are hand-written; anything else came from Gemini.
+  els.describe.replaceChildren(h('p', 'kicker', saved === 'sample' ? 'Description' : 'AI description'), h('h2', '', c.label), h('p', 'text', c.text));
+  els.describe.title = c.text; // the card gives way to the roster on a crowded margin; the full text stays here
+  els.describe.hidden = !c.text;
+  clearTimeout(describeT);
+  describeT = setTimeout(() => { els.describe.hidden = true; }, DESCRIBE_MS);
 }
 
 export function toggleLearning() {

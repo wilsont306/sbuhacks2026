@@ -55,7 +55,7 @@ let hostSeen = 0, rollT, rollWaitT; // hostSeen: last message that came from the
 // ---- screens ----
 function show(s) {
   if (s === state) return;
-  if (s !== 'walk') { leaveInside(false); zero(); } // the socket is gone or seatless: nothing to tell the host
+  if (s !== 'walk') { leaveInside(false); zero(); describe(null); } // the socket is gone or seatless: nothing to tell the host
   state = s;
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== s;
   $('origBtn').hidden = s === 'noroom'; // no TV to show it on
@@ -80,12 +80,28 @@ function lobby(free) {
   show('lobby');
 }
 
-// label: the object the figure stands at (from the host's {t:'near'}), or null.
+// label: the object the figure stands at (from the host's {t:'near'}), or null. Walking to another object (or off
+// this one) closes its description.
+let nearNow = null;
 function near(label) {
   const on = typeof label === 'string' && label !== '';
-  verb.textContent = on ? 'Poke the ' + label.slice(0, 40) : 'Walk to something';
+  if ((on ? label : null) !== nearNow) { nearNow = on ? label : null; describe(null); }
+  verb.textContent = on ? 'About the ' + label.slice(0, 40) : 'Walk to something';
   verb.setAttribute('aria-disabled', on ? 'false' : 'true');
 }
+
+// The verb's answer ({t:'describe', label, text}): a calm card under the verb, and over the inside view while it is
+// open. d is {head, text}, or null to close it; it closes itself after 20 s.
+const DESC_MS = 20000;
+let desc = null, descT;
+function describe(d) {
+  if (!d && !desc) return;
+  desc = d; clearTimeout(descT);
+  $('desc').hidden = !d; $('walk').classList.toggle('described', !!d);
+  if (d) { $('descH').textContent = d.head; $('descP').textContent = d.text; descT = setTimeout(() => describe(null), DESC_MS); }
+  if (inside) inside.describe(d);
+}
+$('descX').onclick = () => describe(null);
 
 function toast(text) {
   const t = $('toast');
@@ -259,6 +275,9 @@ function onMsg(m) {
   else if (t === 'mode') { show('walk'); if (m.mode === 'reset') near(null); } // 'walk' | 'reset': walk is the only seated screen
   else if (t === 'near') near(m.label);
   else if (t === 'readout') { if (m.text) toast(String(m.text)); }
+  else if (t === 'describe') {
+    if (typeof m.text === 'string' && m.text) describe({ head: typeof m.label === 'string' && m.label ? m.label.slice(0, 40) : 'This part of the picture', text: m.text.slice(0, 240) });
+  }
   else if (t === 'world' || t === 'pos') {
     if (inside) inside.msg(m);
     // pos for a closed view: the host missed our Back, so say it again (at most every 5 s)
@@ -270,7 +289,7 @@ function onMsg(m) {
 let lx = 0, a = 0, padId = null, verbId = null, lastIn = 0, inT;
 function setIn(nlx, na) {
   if (nlx === lx && na === a) return;
-  if (na && !a) lastIn = 0; // a Poke is a rising edge on the host: never let IN_GAP coalesce a short tap away
+  if (na && !a) lastIn = 0; // the verb is a rising edge on the host: never let IN_GAP coalesce a short tap away
   lx = nlx; a = na;
   pad.setAttribute('data-lx', lx);
   verb.classList.toggle('down', !!a);
@@ -357,8 +376,9 @@ insideBtn.onclick = () => {
         ask: () => send({ t: 'panel', kind: 'inside', value: 1 }),
         reassert: () => send({ t: 'panel', kind: 'inside', value: 2 }),
         look: () => send({ t: 'panel', kind: 'look', value: 1 }),
-        back: () => leaveInside(true), toast,
+        back: () => leaveInside(true), toast, closeDesc: () => describe(null),
       });
+      if (desc) inside.describe(desc);
     })
     .catch(() => toast('Couldn’t open the inside view; try again'))
     .then(() => { insideBtn.disabled = false; insideLabel.textContent = INSIDE_LABEL; });

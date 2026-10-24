@@ -245,11 +245,9 @@ async function peek(card, c) {
     const lift = el('span', 'art-lift'), cut = el('span', 'art-cut');
     lift.style.setProperty('--z', `${l.z}px`);
     lift.style.setProperty('--k', k);
-    // The sidebar names a part under the pointer and lifts just that part (its lift and its hole share k).
+    // The sidebar lifts just the part under the pointer (its lift and its hole share k). No cut-out moves on its own.
     lift.dataset.k = hole.dataset.k = k;
-    cut.dataset.label = l.label;
-    cut.dataset.motion = l.motion;
-    Object.assign(cut.style, { clipPath: l.clip, backgroundImage: bg, transformOrigin: l.origin });
+    Object.assign(cut.style, { clipPath: l.clip, backgroundImage: bg });
     lift.append(cut);
     back.append(hole);
     plate.append(lift);
@@ -515,10 +513,33 @@ function modalRoot(cls, label) {
   return root;
 }
 
+/* pure:start: the sidebar's hit test, loaded alone by tests/artwork.test.js (no imports, no DOM). */
+const insideOf = (pts, x, y) => {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+};
+const areaOf = (pts) => Math.abs(pts.reduce((a, [x, y], k) => { const [u, v] = pts[(k + 1) % pts.length]; return a + x * v - u * y; }, 0)) / 2;
+// The part under a point of the picture (image space, 0 to 1000): the smallest outline holding it, so a part inside a
+// bigger or nearer one (a star in the sky, a spire in the village) can still be pointed at. -1 for none.
+export function partAt(parts, x, y) {
+  let best = -1, least = Infinity;
+  parts.forEach((p, i) => {
+    const a = areaOf(p.points);
+    if (a < least && insideOf(p.points, x, y)) { best = i; least = a; }
+  });
+  return best;
+}
+/* pure:end */
+
 // After a carriage is pressed, a sidebar slides in from the right with the picture lying flat. Pointing at a part
-// lifts just that part out toward you (with its shadow and the blueprint gap it leaves) and shows its name; nothing
-// says what it does (riders find out on board). Two tickets at the foot: ride solo, or with a group (the boarding
-// screen with the party's QR).
+// lifts just that part out toward you (with its shadow and the blueprint gap it leaves) and shows its name; a part
+// with no cut-out (sky, ground, water, or too small to cut out) is outlined instead. Nothing says what it does
+// (riders find out on board). Two tickets at the foot: ride solo, or with a group (the boarding screen with the
+// party's QR).
 function buildDetail() {
   const root = modalRoot('art-detail', 'Carriage');
   const panel = el('aside', 'art-detail-panel'), view = el('div', 'art-detail-view'), tip = el('span', 'art-detail-tip');
@@ -542,34 +563,44 @@ function buildDetail() {
   tip.hidden = true;
   panel.append(shut, kicker, view, hint, title, note, tickets);
   root.append(panel);
-  let my = 0, hot = null;
+  let my = 0, hot = -1, parts = [];
   const close = () => { my++; root.hidden = true; document.activeElement?.blur(); };
   modalKeys(root, close);
   root.addEventListener('click', (e) => { if (e.target === root) close(); });
   shut.addEventListener('click', close);
-  // One part lifted at a time: its lift and its hole (same k) get .hot; a receding plane is only named.
-  const setHot = (k) => {
-    if (hot === k) return;
+  // One part at a time: a cut-out's lift and hole (same k) get .hot; a part with no cut-out gets its outline drawn.
+  const setHot = (i) => {
+    if (hot === i) return;
+    hot = i;
     for (const e of view.querySelectorAll('.hot')) e.classList.remove('hot');
-    hot = k;
-    view.querySelector('.art-mat')?.classList.toggle('has-hot', k !== null);
-    if (k !== null) for (const e of view.querySelectorAll(`[data-k="${k}"]`)) e.classList.add('hot');
+    view.querySelector('.art-plate > .art-outline')?.remove();
+    const p = parts[i], plate = view.querySelector('.art-plate');
+    view.style.cursor = p ? 'help' : '';
+    view.querySelector('.art-mat')?.classList.toggle('has-hot', !!p && p.k !== undefined);
+    if (p && p.k !== undefined) for (const e of view.querySelectorAll(`[data-k="${p.k}"]`)) e.classList.add('hot');
+    else if (p && plate) outline(plate, [p]);
   };
   view.addEventListener('pointermove', (e) => {
-    const hit = e.target.closest?.('[data-label]');
-    setHot(hit?.closest('.art-lift')?.dataset.k ?? null);
-    if (!hit) { tip.hidden = true; return; }
+    // Hit-tested on the flat picture, not on the element under the pointer: a lifted part grows toward the viewer over
+    // its neighbours, and a part inside a bigger one may have no element of its own to hit.
+    const b = view.querySelector('.art-back')?.getBoundingClientRect();
+    const i = b && b.width && b.height ? partAt(parts, ((e.clientX - b.left) / b.width) * 1000, ((e.clientY - b.top) / b.height) * 1000) : -1;
+    setHot(i);
+    if (i < 0) { tip.hidden = true; return; }
     // #tv is scaled to the window, so client px are turned back into the frame's own px.
     const r = view.getBoundingClientRect(), s = r.width / view.offsetWidth || 1;
-    tip.textContent = hit.dataset.label;
-    tip.style.left = `${(e.clientX - r.left) / s}px`;
-    tip.style.top = `${(e.clientY - r.top) / s}px`;
+    tip.textContent = parts[i].label;
     tip.hidden = false;
+    // Kept inside the view, so a part near the right edge still shows its whole name.
+    tip.style.left = `${Math.max(0, Math.min((e.clientX - r.left) / s + 16, view.offsetWidth - tip.offsetWidth))}px`;
+    tip.style.top = `${(e.clientY - r.top) / s}px`;
   });
-  view.addEventListener('pointerleave', () => { setHot(null); tip.hidden = true; });
+  view.addEventListener('pointerleave', () => { setHot(-1); tip.hidden = true; });
   const show = async (c) => {
     const me = ++my, print = printEl(c);
-    hot = null;
+    hot = -1;
+    parts = [];
+    view.style.cursor = '';
     tip.hidden = true;
     view.replaceChildren(print.mat, tip);
     view.setAttribute('aria-label', c.title);
@@ -585,14 +616,15 @@ function buildDetail() {
     peek(print.mat, c);
     const scene = await sceneFor(c);
     if (me !== my) return;
-    const parts = peekLayers(scene, { surfaces: true });
-    // The receding planes are named where they lie, under the cut-outs.
-    const back = print.mat.querySelector('.art-back');
-    for (const l of parts.filter((p) => p.surface)) {
-      const zone = el('span', 'art-zone');
-      zone.style.clipPath = l.clip;
-      zone.dataset.label = l.label;
-      back.append(zone);
+    parts = peekLayers(scene, { surfaces: true });
+    // peek() numbers its cut-outs in this same order: peekLayers without the receding planes, sorted the same way.
+    let k = 0;
+    for (const p of parts) if (!p.surface) p.k = k++;
+    // A part too small to cut out (under PEEK_MIN_AREA) is still named, and outlined when pointed at.
+    for (const o of scene ? scene.objects : []) {
+      if (peekLayers({ objects: [o] }, { surfaces: true }).length) continue;
+      const [x0, y0, x1, y1] = o.box;
+      parts.push({ label: o.label, points: o.mask || [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] });
     }
     view.setAttribute('aria-label', `${c.title}: ${parts.map((p) => p.label).join(', ')}`);
     hint.textContent = parts.length ? 'Point at the picture: each part lifts out and says its name.' : '';

@@ -29,7 +29,10 @@ function assertContract(s) {
   assert.ok(s.objects.length <= 8);
   for (const o of s.objects) {
     const keys = ['label', 'kind', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt'];
-    assert.deepEqual(Object.keys(o), 'model_url' in o ? [...keys, 'model_url'] : keys);
+    if ('description' in o) keys.push('description');
+    if ('model_url' in o) keys.push('model_url');
+    assert.deepEqual(Object.keys(o), keys);
+    if ('description' in o) assert.ok(typeof o.description === 'string' && o.description.length >= 1 && o.description.length <= 240);
     if ('model_url' in o) assert.ok(isAsset(o.model_url));
     assert.ok(typeof o.label === 'string' && o.label.length >= 1 && o.label.length <= 40);
     assert.ok(KINDS.includes(o.kind));
@@ -173,6 +176,29 @@ test('labels, colours and sound prompts are cleaned', () => {
   assert.equal(q.colour, '#808080');
 });
 
+test('description: one trimmed line, at most 240 characters cut at a word boundary; empty or non-string means none', () => {
+  const desc = (description) => validateScene({ objects: [{ ...cypress, description }] }, META).objects[0];
+  const a = desc('  A tall\n\tcypress,\u0000 painted   in long strokes.  ');
+  assertContract({ ...validateScene({}, META), objects: [a] });
+  assert.equal(a.description, 'A tall cypress, painted in long strokes.');
+  assert.equal(Object.keys(a).indexOf('description'), 8, 'after sound_prompt');
+  const [b] = validateScene({ objects: [{ ...cypress, description: 'x', model_url: '/m.glb' }] }, META).objects;
+  assert.deepEqual(Object.keys(b).slice(-2), ['description', 'model_url']);
+  // 'word ' is 5 characters: 48 of them reach exactly 240, a 49th runs over and is cut back to the last whole word.
+  const long = 'word '.repeat(60);
+  assert.equal(desc(long).description, 'word '.repeat(48).trim());
+  const edge = 'a'.repeat(236) + ' bcdefg';
+  assert.equal(desc(edge).description, 'a'.repeat(236), 'a word that crosses 240 is dropped whole');
+  assert.equal(desc('a'.repeat(240) + ' b').description.length, 240, 'a space right at 240 keeps all 240');
+  assert.equal(desc('z'.repeat(500)).description, 'z'.repeat(240), 'one endless word is cut hard');
+  for (const bad of [undefined, null, '', '   \n ', 42, true, ['a'], { text: 'a' }]) assert.equal('description' in desc(bad), false, String(bad));
+  const old = validateScene(JSON.parse(JSON.stringify(validateScene(RAW, META))), {});
+  assertContract(old);
+  assert.ok(old.objects.every((o) => !('description' in o)), 'a scene from before descriptions still validates');
+  const stored = validateScene({ ...RAW, objects: [a] }, META);
+  assert.deepEqual(validateScene(JSON.parse(JSON.stringify(stored)), {}), stored, 'a stored description re-validates to itself');
+});
+
 // Both asset fields share one rule: https or site-relative, at most 300 characters, no whitespace.
 const ASSET_BAD = ['http://example.com/a.glb', 'javascript:alert(1)', 'data:model/gltf-binary;base64,AAAA', 'blob:https://x/1', '//evil.example/a.glb',
   '/\\evil.example/a.glb', 'models/a.glb', 'https://', 'https://exa mple.com/a.glb', ' https://example.com/a.glb', '/a b.png', '/a\tb.png', '', 42, null, {}];
@@ -283,7 +309,7 @@ test('fuzz: random structures always come out as the contract', () => {
     if (depth > 3 || r < 0.15) return [NaN, Infinity, -1e9, 1e9, 500, '400', '', 'sky', '#fff', null, undefined, true][Math.floor(rnd() * 12)];
     if (r < 0.5) return Array.from({ length: Math.floor(rnd() * 30) }, () => junk(depth + 1));
     const o = {};
-    for (const k of ['label', 'kind', 'box_2d', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'objects', 'ground_path', 'palette']) if (rnd() < 0.5) o[k] = junk(depth + 1);
+    for (const k of ['label', 'kind', 'box_2d', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description', 'objects', 'ground_path', 'palette']) if (rnd() < 0.5) o[k] = junk(depth + 1);
     return o;
   };
   for (let i = 0; i < 400; i++) {
@@ -299,6 +325,8 @@ test('sceneJsonSchema is flat, small and in step with the enums and limits', () 
   const item = s.properties.objects.items;
   assert.deepEqual(item.properties.kind.enum, KINDS);
   assert.deepEqual(item.properties.motion.enum, MOTIONS);
+  assert.deepEqual(item.required, ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description']);
+  assert.equal(item.properties.description.type, 'string');
   assert.equal(s.properties.objects.maxItems, 8);
   assert.equal(item.properties.mask.maxItems, 24);
   assert.equal(s.properties.ground_path.maxItems, 8);

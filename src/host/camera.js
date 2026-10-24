@@ -58,14 +58,16 @@ export function corners(r, v, zp = 0) {
 }
 
 // Bodies and name tags of the group ({x, y, t, tagged}, feet at x, y). Heights come from t alone, never the sprite's
-// scale, so the join pulse cannot pump the frame.
-export function groupBox(figs) {
+// scale, so the join pulse cannot pump the frame. `looks` ([x, y] world points) are the centres of the objects figures
+// stand at: framed too, so a glow far from the path (a sun, a moon) is on screen.
+export function groupBox(figs, looks = []) {
   const b = { minx: Infinity, maxx: -Infinity, miny: Infinity, maxy: -Infinity };
   for (const { x, y, t, tagged } of figs) {
     const h = figH(t), w = h * FIG_ASPECT / 2;
     b.minx = Math.min(b.minx, x - w); b.maxx = Math.max(b.maxx, x + w);
     b.miny = Math.min(b.miny, y); b.maxy = Math.max(b.maxy, y + h + (tagged ? TAG_GAP + TAG_H : 0));
   }
+  for (const [x, y] of looks) { b.minx = Math.min(b.minx, x); b.maxx = Math.max(b.maxx, x); b.miny = Math.min(b.miny, y); b.maxy = Math.max(b.maxy, y); }
   return b;
 }
 

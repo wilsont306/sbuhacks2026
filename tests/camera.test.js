@@ -6,6 +6,9 @@ import {
   TAG_GAP, TAG_H, FIG_ASPECT, LEAN_Y, ZOOM_MIN, ZOOM_MAX,
 } from '../src/host/camera.js';
 import { MIN_T } from '../src/shared/protocol.js';
+import { sceneDepth, pathPoints, objectHotspots } from '../src/host/maskDepth.js';
+import { sampler } from '../src/host/depth.js';
+import { validateScene } from '../src/shared/scene-validate.js';
 
 // The stage as scene.js builds it: a 4-unit plane at the painting's aspect, relief up to AMP, a 1447 x 1080 canvas.
 const W = 4, H = W / (1920 / 1433), AMP = 0.42, LIFT = 0.015, r = rig(W, H, 1447 / 1080);
@@ -13,9 +16,9 @@ const path = JSON.parse(readFileSync(new URL('../public/path.json', import.meta.
 const TAG_W = 1.0; // world units; wider than the widest slot name's tag ("Slate Dog-walker", about 0.85)
 const STEP = 1 / 60, SPEED = 0.10;
 
-// Uniform Catmull-Rom with tension 0.5 through path.json's points, ends extrapolated (what THREE's curve does).
-function curve(t) {
-  const P = path.points, l = P.length, p = (l - 1) * Math.min(1, Math.max(0, t));
+// Uniform Catmull-Rom with tension 0.5 through path.json's points (or P), ends extrapolated (what THREE's curve does).
+function curve(t, P = path.points) {
+  const l = P.length, p = (l - 1) * Math.min(1, Math.max(0, t));
   let i = Math.floor(p), w = p - i;
   if (i >= l - 1) { i = l - 2; w = 1; }
   const p0 = i > 0 ? P[i - 1] : P[0].map((x, k) => 2 * x - P[1][k]);
@@ -147,4 +150,19 @@ test('(d) focus frame only while exactly one plaque is owned, then a blend back 
   for (let n = 1; n <= 72; n++) { stepView(r, cam, follow, 0, 0, STEP); if (n === 36) at06 = gap(cam); }
   assert.ok(at06 > 0.05, `the blend back is a cut (${at06.toFixed(3)} left at 0.6 s)`);
   assert.ok(gap(cam) <= 0.05, `the blend back has ${(gap(cam) * 100).toFixed(1)}% left at 1.2 s`);
+});
+
+test('(e) a lone figure at any stop of the bundled samples has that object\'s centre in frame, so its glow shows', () => {
+  for (const [name, aspect] of [['turner', 1920 / 1433], ['sketch', 1600 / 1200], ['starry-night', 1920 / 1520]]) {
+    const s = validateScene(JSON.parse(readFileSync(new URL(`../public/samples/${name}.scene.json`, import.meta.url), 'utf8')));
+    const pts = pathPoints(s, sampler(sceneDepth(s))), w = H * aspect, rr = rig(w, H, 1447 / 1080);
+    for (const st of objectHotspots(s, pts)) {
+      const [u, v] = curve(st.t, pts), look = [(st.look[0] - 0.5) * w, (st.look[1] - 0.5) * H];
+      const aim = followAim(rr, groupBox([{ x: (u - 0.5) * w, y: (v - 0.5) * H, t: st.t, tagged: true }], [look]));
+      for (const mouseX of [-1, 0, 1]) for (const leanY of [-LEAN_Y, 0, LEAN_Y]) {
+        const [nx, ny] = project(rr, { ...aim, lean: leanFor(u, mouseX, 0, aim.zoom, 1), leanY }, [...look, 0]);
+        assert.ok(Math.abs(nx) <= 1 && Math.abs(ny) <= 1, `${name}: ${st.label} at t ${st.t} is off screen (${nx.toFixed(2)}, ${ny.toFixed(2)})`);
+      }
+    }
+  }
 });

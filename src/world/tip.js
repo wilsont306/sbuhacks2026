@@ -134,6 +134,21 @@ export function extentOf(cam) {
   return { back: cam.nearDist, far, width: 4 * half, height: 2 * Math.max(top, cam.eye) };
 }
 
+// Which way along the path Walk goes (+1 toward increasing t, -1 back) for a look direction (lookX, lookZ) and the
+// path's +t tangent (tanX, tanZ) on the floor: the nearer of the two. It switches away from `current` only past
+// hysteresisDeg beyond perpendicular, so a look held almost sideways does not flicker. With no current it takes the
+// nearer side; a look or tangent with no length keeps current (else +1).
+export function walkSign(lookX, lookZ, tanX, tanZ, current, hysteresisDeg) {
+  const cur = current === 1 || current === -1 ? current : 0;
+  const ll = Math.hypot(lookX, lookZ), tl = Math.hypot(tanX, tanZ);
+  const c = (lookX * tanX + lookZ * tanZ) / (ll * tl); // cosine of the look's angle from +t
+  if (!(ll > 1e-6) || !(tl > 1e-6) || !fin(c)) return cur || 1;
+  const s = Math.sin(clamp(fin(hysteresisDeg) ? hysteresisDeg : 0, 0, 89) * RAD);
+  if (cur === 1) return c < -s ? -1 : 1;
+  if (cur === -1) return c > s ? 1 : -1;
+  return c >= 0 ? 1 : -1;
+}
+
 // ---- The depth room (README, Inside view): the same room re-shaped by a depth picture ----
 // depth (D1): {data: Uint8Array, one byte per pixel, rows top first, w, h}, 255 nearest, Depth Anything V2's relative
 // inverse depth min-max normalised over the picture. On the floor inverse depth is affine in that value, so a line

@@ -94,6 +94,20 @@ main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction
 .verb.down { transform: translateY(4px); box-shadow: 0 0 0 var(--prussian-deep); }
 .verb[aria-disabled="true"] { background: transparent; color: var(--frame-ink); border: 2px dashed var(--frame-ink); box-shadow: none; transform: none; font-weight: 400; }
 
+/* the verb's answer: a calm paper card under the verb; its row exists only while it shows (no empty gap), it takes
+   the walk hint's room, and it scrolls rather than squeezing the pad below its minimum */
+#walk.described { grid-template: "pad" 1fr "verb" auto "desc" minmax(0, auto) "inside" auto "art" auto / 1fr; }
+#walk.described .padhint { display: none; }
+#desc { grid-area: desc; }
+.desc {
+  overflow-y: auto; touch-action: pan-y; padding: 12px 16px 16px 20px; border-radius: var(--radius-card);
+  background: var(--cream); color: var(--ink); text-align: left; box-shadow: var(--shadow-card); animation: fade-in var(--fade) ease-out;
+}
+.desc-head { display: flex; align-items: flex-start; }
+.desc h2 { flex: 1; min-width: 0; margin: 8px 12px 0 0; font: 400 24px/1.15 var(--font-display); overflow-wrap: break-word; }
+.desc p { margin: 8px 0 0; font-size: 18px; line-height: 1.4; }
+.desc-x { flex: none; padding: 6px 16px; border-color: var(--ink); color: var(--ink); font-size: 18px; }
+
 #art { grid-area: art; text-align: center; }
 #insideBtn { grid-area: inside; }
 #artBtn, #insideBtn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 56px; }
@@ -126,6 +140,7 @@ body.joined::after { content: ''; position: fixed; top: 0; right: 0; bottom: 0; 
   .kicker { display: none; }
   .card { padding: 24px; }
   #walk { grid-template: "hint hint" auto "pad verb" 1fr "pad inside" auto "pad art" auto / 3fr 2fr; }
+  #walk.described { grid-template: "pad verb" 1fr "pad desc" minmax(0, auto) "pad inside" auto "pad art" auto / 3fr 2fr; }
   #pad { min-height: 0; }
   #swatches { grid-template-columns: 1fr 1fr; }
 }

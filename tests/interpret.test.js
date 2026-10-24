@@ -122,6 +122,8 @@ test('gemini: the request carries the inline image at low resolution, the JSON s
   assert.equal(thinkingFor('gemini-3.8-flash'), 'low');
   assert.match(PROMPT, /unknown/);
   assert.match(PROMPT, /12 words/);
+  assert.match(PROMPT, /- description: .*220 characters/);
+  assert.doesNotMatch(PROMPT, /poke/);
 });
 
 test('gemini: parseOutput reads output_text or the model_output steps; rejects non-objects', () => {
