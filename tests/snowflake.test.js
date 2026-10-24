@@ -19,6 +19,9 @@ const ENV = {
   SNOWFLAKE_ACCOUNT: 'myorg-myacct', SNOWFLAKE_USER: 'lb_service', SNOWFLAKE_PRIVATE_KEY: privateKey,
   SNOWFLAKE_WAREHOUSE: 'lb_wh', SNOWFLAKE_DATABASE: 'lb_db', SNOWFLAKE_SCHEMA: 'app', SNOWFLAKE_ROLE: 'lb_app',
 };
+// A fake programmatic access token, and an env that has it instead of the key pair.
+const PAT = 'FAKE.pat.secret.0123456789abcdef';
+const PAT_ENV = { ...ENV, SNOWFLAKE_USER: undefined, SNOWFLAKE_PRIVATE_KEY: undefined, SNOWFLAKE_PAT: PAT };
 const ID = '0b6f6c1e-1d7a-4c55-9f0e-5a8c3d2b1a00';
 const SCENE = { id: ID, source: 'drop', objects: [{ label: 'sun', kind: 'celestial', mask: [[1, 2], [3, 4], [5, 6]] }], palette: ['#112233'] };
 
@@ -208,6 +211,96 @@ describe('helpers', () => {
     assert.ok(isProjectId(ID));
     assert.ok(isProjectId('sample-starry-night'));
     for (const bad of ['', "x' OR 1=1", 'a/b', 'x'.repeat(65), null, '-lead']) assert.equal(isProjectId(bad), false);
+  });
+});
+
+describe('programmatic access token', () => {
+  const HEADER_ORDER = ['Authorization', 'X-Snowflake-Authorization-Token-Type', 'Content-Type', 'Accept', 'User-Agent'];
+  const FIXED = { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'LivingBlueprint/2.0' };
+
+  it('configured: account, warehouse, database and schema, plus a PAT or else both the user and the key', () => {
+    const { SNOWFLAKE_USER: user, SNOWFLAKE_PRIVATE_KEY: key, ...base } = ENV;
+    const cases = [
+      [ENV, true],
+      [{ ...base, SNOWFLAKE_PAT: PAT }, true],
+      [{ ...ENV, SNOWFLAKE_PAT: PAT }, true],
+      [{ ...base, SNOWFLAKE_PAT: PAT, SNOWFLAKE_USER: user }, true],
+      [{ ...base, SNOWFLAKE_PAT: PAT, SNOWFLAKE_PRIVATE_KEY: ' ' }, true],
+      [{ ...ENV, SNOWFLAKE_PAT: ' \n' }, true],
+      [{ ...base, SNOWFLAKE_PAT: ' \n' }, false],
+      [base, false],
+      [{ ...base, SNOWFLAKE_USER: user }, false],
+      [{ ...base, SNOWFLAKE_PRIVATE_KEY: key }, false],
+      ...['SNOWFLAKE_ACCOUNT', 'SNOWFLAKE_WAREHOUSE', 'SNOWFLAKE_DATABASE', 'SNOWFLAKE_SCHEMA'].flatMap((k) => [
+        [{ ...base, SNOWFLAKE_PAT: PAT, [k]: ' ' }, false],
+        [{ ...ENV, [k]: undefined }, false],
+      ]),
+    ];
+    cases.forEach(([env, want], i) => assert.equal(configured(env), want, `case ${i}`));
+  });
+
+  it('sends the trimmed PAT as the bearer token with exactly these headers; the body is unchanged', async () => {
+    const f = fakeFetch(result(['N'], [['1']]));
+    await sql('SELECT 1', [], opts(f, { env: { ...PAT_ENV, SNOWFLAKE_PAT: `  ${PAT}\n` } }));
+    const [{ url, init, body }] = f.calls;
+    assert.equal(url, BASE);
+    assert.deepEqual(init.headers, { Authorization: `Bearer ${PAT}`, 'X-Snowflake-Authorization-Token-Type': 'PROGRAMMATIC_ACCESS_TOKEN', ...FIXED });
+    assert.deepEqual(Object.keys(init.headers), HEADER_ORDER);
+    assert.deepEqual([body.warehouse, body.database, body.schema, body.role], ['LB_WH', 'LB_DB', 'APP', 'LB_APP']);
+  });
+
+  it('strips quotes a pasted env value kept, and a quoted blank counts as no PAT', async () => {
+    for (const quoted of [`"${PAT}"`, `'${PAT}'`, ` "${PAT}" \n`]) {
+      const f = fakeFetch(result(['N'], [['1']]));
+      await sql('SELECT 1', [], opts(f, { env: { ...PAT_ENV, SNOWFLAKE_PAT: quoted } }));
+      assert.equal(f.calls[0].init.headers.Authorization, `Bearer ${PAT}`, quoted);
+    }
+    const { SNOWFLAKE_USER: _u, SNOWFLAKE_PRIVATE_KEY: _k, ...base } = ENV;
+    assert.equal(configured({ ...base, SNOWFLAKE_PAT: '""' }), false);
+  });
+
+  it('wins over a key pair, which is then never read, on the poll too', async () => {
+    const f = fakeFetch(pending(), result(['N'], [['1']]));
+    await sql('SELECT 1', [], opts(f, { env: { ...ENV, SNOWFLAKE_PRIVATE_KEY: 'not a key', SNOWFLAKE_PAT: PAT } }));
+    assert.deepEqual(f.calls.map((c) => [c.init.method, c.init.headers.Authorization]), [['POST', `Bearer ${PAT}`], ['GET', `Bearer ${PAT}`]]);
+  });
+
+  it('without a PAT (or with a blank one) the key-pair headers are as before', async () => {
+    for (const env of [ENV, { ...ENV, SNOWFLAKE_PAT: '  ' }]) {
+      const f = fakeFetch(result(['N'], [['1']]));
+      await sql('SELECT 1', [], opts(f, { env }));
+      const { Authorization, ...rest } = f.calls[0].init.headers;
+      assert.deepEqual(Object.keys(f.calls[0].init.headers), HEADER_ORDER);
+      assert.deepEqual(rest, { 'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT', ...FIXED });
+      assert.equal(decode(Authorization.split(' ')[1].split('.')[1]).sub, 'MYORG-MYACCT.LB_SERVICE');
+    }
+  });
+
+  it('never leaks into a thrown error, a warn line or the accepted log line', async (t) => {
+    const warn = quiet(t);
+    const log = logs(t);
+    const frag = PAT.slice(0, 8);
+    const echo = fakeFetch({ status: 401, json: { code: '390303', message: `Invalid token ${PAT}.` } });
+    const cut = fakeFetch({ status: 401, json: { code: '390303', message: `${'x'.repeat(190)}${PAT}` } }); // the 200-char cut lands inside it
+    // undici quotes a malformed header value back in its TypeError.
+    const quoting = async (url, init) => { throw new TypeError(`Headers.append: "${init.headers.Authorization}" is an invalid header value.`); };
+    for (const f of [echo, cut, quoting]) {
+      await assert.rejects(sql('SELECT 1', [], opts(f, { env: PAT_ENV })), (err) => {
+        assert.ok(!String(err.message).includes(frag) && !String(err.stack).includes(frag), err.message);
+        assert.match(err.message, /\[token\]/);
+        return true;
+      });
+      assert.equal(await saveProject({ id: ID, scene: SCENE }, opts(f, { env: PAT_ENV })), false);
+      assert.deepEqual(await listProjectsResult(24, opts(f, { env: PAT_ENV })), { ok: false, rows: [] });
+      assert.deepEqual(await getProjectResult(ID, opts(f, { env: PAT_ENV })), { ok: false, project: null });
+    }
+    assert.equal(await saveProject({ id: ID, scene: SCENE }, opts(fakeFetch(pending()), { env: PAT_ENV })), true);
+    assert.equal(warn.mock.calls.length, 9);
+    assert.equal(log.mock.calls.length, 1);
+    for (const c of [...warn.mock.calls, ...log.mock.calls]) {
+      const line = c.arguments.join(' ');
+      assert.ok(!line.includes(frag), line);
+    }
   });
 });
 

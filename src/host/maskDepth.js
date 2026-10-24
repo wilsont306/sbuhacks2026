@@ -11,8 +11,8 @@ const FLAT_PATH = [[50, 850], [950, 850]]; // scene-validate's flat default (x 0
 const MAX_OBJECTS = 32, MAX_POINTS = 64; // far above the contract's 8 and 24; only a bound on work
 const U_MIN = 0.05, U_MAX = 0.95;
 // Hotspots stay clear of the staggered start points (scene.js startT reaches MIN_T + 0.072) plus a half-width,
-// and two hotspots never overlap (2 half-widths apart). A nudge further than two gaps drops the hotspot instead.
-const T_FIRST = MIN_T + 0.11, T_LAST = 1 - HOTSPOT_HALF_WIDTH, T_GAP = 2 * HOTSPOT_HALF_WIDTH, T_NUDGE = 2 * T_GAP;
+// and two hotspots never touch (2 half-widths and a 0.01 gap apart), so a walk leaves one before it reaches the next.
+const T_FIRST = MIN_T + 0.11, T_LAST = 1 - HOTSPOT_HALF_WIDTH, T_GAP = 2 * HOTSPOT_HALF_WIDTH + 0.01;
 const ZOOM = 1.3;
 const TICK = 1e4; // hotspot t is spaced in integer ticks so rounding can never bring two closer than the gap
 
@@ -136,7 +136,11 @@ export function sceneDepth(scene, opts) {
   return { data, w, h, placeholder: false };
 }
 
-// Which object owns each pixel, for the shader's per-object motion: i + 1 for scene.objects[i], 0 for none. Same rows,
+// Each paintable object's outline in image space (its mask, else its box), far first: the order objectIdMap paints
+// them in, so scene.js can draw the stops' outlines with nearer objects covering farther lines.
+export const objectOutlines = (scene) => layers(scene).map(({ index, pts }) => ({ index, pts }));
+
+// Which object owns each pixel, for the shader's glow on the object a figure stands at: i + 1 for scene.objects[i], 0 for none. Same rows,
 // fill and painting order as sceneDepth, unblurred so ids never mix at the edges.
 export function objectIdMap(scene, opts) {
   const o = isObj(opts) ? opts : {};
@@ -204,8 +208,9 @@ function nearestT(line, u, v) {
 
 const labelOf = (o) => (typeof o.label === 'string' && o.label.trim() ? o.label.trim() : typeof o.kind === 'string' && o.kind ? o.kind : 'object').slice(0, 40);
 
-// 1D label placement in integer ticks (sorted wants in, positions out): each run of crowded hotspots is spread `gap`
-// apart around its mean and kept inside [lo, hi]; runs that then overlap merge and are spread again.
+// 1D label placement in integer ticks (wants in walk order, positions out in that order): each run of crowded or
+// out-of-order hotspots is spread `gap` apart around its mean and kept inside [lo, hi]; runs that then overlap merge
+// and are spread again. Needs (want.length - 1) * gap <= hi - lo.
 function layout(want, lo, hi, gap) {
   const groups = [], start = (g) => clamp(Math.round(g.sum / g.n - gap * (g.n - 1) / 2), lo, hi - gap * (g.n - 1));
   for (const w of want) {
@@ -219,28 +224,21 @@ function layout(want, lo, hi, gap) {
   return groups.flatMap((g) => Array.from({ length: g.n }, (_, k) => start(g) + k * gap));
 }
 
-// Admit hotspots in scene order (earlier objects keep theirs on a crowded stretch) while the laid-out set still fits:
-// every one inside [lo, hi] and within `nudge` of its object. Extras are dropped rather than overlapped.
-function spread(spots, lo, hi, gap, nudge) {
-  let keep = [], ticks = [];
-  for (const s of spots) {
-    const trial = [...keep, s].sort((a, b) => a.want - b.want || a.index - b.index), t = layout(trial.map((x) => x.want), lo, hi, gap);
-    if (t.every((x, i) => x >= lo && Math.abs(x - trial[i].want) <= nudge)) { keep = trial; ticks = t; }
-  }
-  return keep.map((s, i) => ({ ...s, tick: ticks[i] }));
-}
-
+// One stop per usable object (sky, cloud and celestial ones too), in the objects' left-to-right order, so a walk end to
+// end visits each once; crowded ones are spread evenly instead of dropped.
 export function objectHotspots(scene, points) {
   const line = Array.isArray(points) ? points.filter((p) => Array.isArray(p) && fin(p[0]) && fin(p[1])) : [];
   if (line.length < 2) return [];
-  const spots = [];
+  const lo = Math.round(T_FIRST * TICK), hi = Math.round(T_LAST * TICK), gap = Math.round(T_GAP * TICK), spots = [];
   objectsOf(scene).forEach((o, index) => {
     if (!isObj(o)) return;
     const box = boxOf(o);
     if (!box) return;
     const [x0, y0, x1, y1] = box, t = nearestT(line, (x0 + x1) / 2000, 1 - y1 / 1000); // the box's bottom-centre
-    spots.push({ index, label: labelOf(o), want: Math.round(clamp(t, T_FIRST, T_LAST) * TICK), look: [round4((x0 + x1) / 2000), round4(1 - (y0 + y1) / 2000)], zoom: ZOOM });
+    spots.push({ index, label: labelOf(o), x: x0 + x1, want: Math.round(clamp(t, T_FIRST, T_LAST) * TICK), look: [round4((x0 + x1) / 2000), round4(1 - (y0 + y1) / 2000)], zoom: ZOOM });
   });
-  return spread(spots, Math.round(T_FIRST * TICK), Math.round(T_LAST * TICK), Math.round(T_GAP * TICK), Math.round(T_NUDGE * TICK))
-    .map(({ index, label, tick, look, zoom }) => ({ index, label, t: tick / TICK, look, zoom }));
+  // shortcut: the range holds 11 stops (a validated scene has at most 8); past that the least prominent objects get none.
+  const kept = spots.slice(0, Math.floor((hi - lo) / gap) + 1).sort((a, b) => a.x - b.x || a.want - b.want || a.index - b.index);
+  const ticks = layout(kept.map((s) => s.want), lo, hi, gap);
+  return kept.map(({ index, label, look, zoom }, i) => ({ index, label, t: ticks[i] / TICK, look, zoom }));
 }

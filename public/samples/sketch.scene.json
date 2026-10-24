@@ -5,6 +5,7 @@
  "credit": "Sample sketch drawn for this demo.",
  "image_url": "/samples/sketch.svg",
  "scene_url": "",
+ "depth_url": "/samples/sketch.depth.png",
  "model": "hand-corrected",
  "generated_at": "2026-10-24T09:00:00.000Z",
  "ai_draft": true,
@@ -55,7 +56,8 @@
    "depth": 0.95,
    "colour": "#f2c14e",
    "motion": "spin",
-   "sound_prompt": "Warm summer morning birdsong with a soft gentle breeze"
+   "sound_prompt": "Warm summer morning birdsong with a soft gentle breeze",
+   "description": "A sun in the top right corner, drawn as a spiky star with ten points. It is a flat yellow wash inside a wobbly ink outline."
   },
   {
    "label": "Puffy cloud",
@@ -90,7 +92,8 @@
    "depth": 0.85,
    "colour": "#c9d6e3",
    "motion": "drift",
-   "sound_prompt": "Soft wind gusting past, a distant low rumble of thunder"
+   "sound_prompt": "Soft wind gusting past, a distant low rumble of thunder",
+   "description": "A puffy cloud near the top of the page, with two tiny birds flying to its right. Its bumpy edge is one wobbly ink line over a pale blue-grey wash."
   },
   {
    "label": "House",
@@ -112,7 +115,8 @@
    "depth": 0.5,
    "colour": "#d98c5f",
    "motion": "none",
-   "sound_prompt": "A wooden front door creaking open, then closing softly"
+   "sound_prompt": "A wooden front door creaking open, then closing softly",
+   "description": "A small house with a pointed roof, a chimney with a curl of smoke, a front door and two windows. It is filled with a warm orange-brown wash inside a simple ink outline."
   },
   {
    "label": "Tree",
@@ -145,7 +149,8 @@
    "depth": 0.45,
    "colour": "#7fae6a",
    "motion": "sway",
-   "sound_prompt": "Leaves rustling in a light breeze, a branch creaking"
+   "sound_prompt": "Leaves rustling in a light breeze, a branch creaking",
+   "description": "A leafy tree with a round crown on a straight trunk. Two short lines inside the crown hint at its branches, and the green wash sits loosely inside the ink."
   },
   {
    "label": "Dog",
@@ -176,7 +181,8 @@
    "depth": 0.25,
    "colour": "#a67c52",
    "motion": "bob",
-   "sound_prompt": "A small friendly dog barking twice, tail thumping"
+   "sound_prompt": "A small friendly dog barking twice, tail thumping",
+   "description": "A small brown dog standing below the tree, facing left with its tail held up. A dot for an eye and a few short lines are all it takes."
   },
   {
    "label": "River",
@@ -197,7 +203,8 @@
    "depth": 0.3,
    "colour": "#7fb3d5",
    "motion": "sway",
-   "sound_prompt": "A shallow stream babbling over pebbles, gentle and steady"
+   "sound_prompt": "A shallow stream babbling over pebbles, gentle and steady",
+   "description": "A river winding down from the horizon on the right, growing wider as it comes closer. Little curved ink marks on the blue wash show ripples on the water."
   },
   {
    "label": "Garden path",
@@ -220,7 +227,8 @@
    "depth": 0.2,
    "colour": "#d9c49a",
    "motion": "none",
-   "sound_prompt": "Footsteps crunching slowly along a gravel garden path"
+   "sound_prompt": "Footsteps crunching slowly along a gravel garden path",
+   "description": "A garden path running from the front door of the house toward the river. It widens as it comes nearer, and a few ink dots read as pebbles along the way."
   }
  ]
 }

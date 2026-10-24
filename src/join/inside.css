@@ -1,0 +1,64 @@
+/* The inside view: a full-screen WebGL world with the pad's controls laid over it, loaded with inside.js.
+   Colours from tokens.css only. Sits under the player's colour frame (body.joined::after, z 5) and the splash (10);
+   the toast, Reconnecting and resting lines rise above it. iOS 13: no flex gap, no inset. */
+.inside {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 4; overflow: hidden;
+  background: var(--prussian-deep); color: var(--frame-ink); touch-action: none; animation: fade-in var(--fade) ease-out;
+}
+.in-gl { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
+
+.in-top {
+  position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: flex-start; justify-content: space-between;
+  padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 16px) 24px calc(env(safe-area-inset-left) + 16px);
+  background: linear-gradient(var(--vignette), var(--vignette) 40%, transparent); pointer-events: none;
+}
+.in-top button { pointer-events: auto; font-size: 18px; }
+.in-back { display: flex; align-items: center; flex: none; padding: 8px 18px 8px 10px; border: 0; background: var(--cream); color: var(--ink); box-shadow: var(--shadow-card); }
+.in-back svg { width: 22px; height: 22px; margin-right: 4px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.in-tilt { max-width: 58%; margin-left: 12px; padding: 8px 14px; line-height: 1.15; background: var(--card-frame); }
+.in-tilt[aria-pressed="true"] { border-color: var(--cream); background: var(--cream); color: var(--ink); }
+
+.in-hint {
+  position: absolute; top: 30%; left: 50%; margin: 0; padding: 10px 20px; border-radius: var(--radius-pill);
+  background: var(--vignette); font-size: 18px; white-space: nowrap; pointer-events: none;
+  transform: translateX(-50%); transition: opacity 600ms ease-out;
+}
+.in-hint.gone { opacity: 0; }
+
+/* "Building the world…" and every failure: the same calm paper card as the connecting screen */
+.in-card {
+  position: absolute; top: 50%; left: 50%; width: calc(100% - 48px); max-width: 400px; padding: 28px 24px;
+  border-radius: var(--radius-card); background: var(--cream); color: var(--ink); text-align: center;
+  box-shadow: var(--shadow-lift); transform: translate(-50%, -50%);
+}
+.in-card h2 { margin: 0 0 12px; font: 400 28px/1.15 var(--font-display); }
+.in-card p { margin: 0; color: var(--ink-soft); font-size: 18px; }
+.in-card .primary { margin-top: 24px; }
+.in-card.busy h2 { animation: in-breathe 2.4s ease-in-out infinite; }
+@keyframes in-breathe { 50% { opacity: .5; } }
+
+/* Walk (held), the verb, Turn around */
+.in-pad {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between;
+  padding: 32px calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 16px) calc(env(safe-area-inset-left) + 16px);
+  background: linear-gradient(transparent, var(--vignette) 60%);
+}
+.in-round {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; padding: 0;
+  border: 0; border-radius: 50%; background: var(--cream); color: var(--ink); touch-action: none; box-shadow: var(--shadow-card);
+}
+.in-round * { pointer-events: none; }
+.in-round svg { width: 36px; height: 36px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.in-round.on { background: var(--ink); color: var(--cream); box-shadow: none; transform: translateY(2px); }
+.in-verb { flex: 0 1 420px; min-width: 0; min-height: 72px; margin: 0 8px; padding: 8px 10px; font-size: 18px; line-height: 1.15; overflow-wrap: break-word; }
+.in-verb[aria-disabled="true"] { background: var(--vignette); }
+
+/* the verb's answer (join.css's .desc card) floats above Walk, the verb and Turn around */
+.in-desc {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 112px); width: calc(100% - 32px); max-width: 420px;
+  max-height: 45%; box-shadow: var(--shadow-lift); transform: translateX(-50%);
+}
+
+body.inside #toast { z-index: 6; bottom: 104px; } /* above Walk, Turn around and the verb */
+body.inside #banner { z-index: 6; }
+body.inside #resting { position: relative; z-index: 6; }

@@ -3,7 +3,9 @@
 // A visitor's own ElevenLabs key (the API box, src/shared/byok.js) rides along on /api/sfx as x-elevenlabs-key.
 import { apiHeaders, EVENT as KEYS_EVENT } from '../shared/byok.js';
 
-export const EVENTS = ['join', 'poke', 'appear', 'save', 'reset', 'gallery'];
+// The gallery's railway adds four: step (between carriages), door (a carriage's sidebar), punch (a ticket chosen) and
+// whistle (all aboard). A phone taking a seat already rings join. describe (the verb at an object) plays that object's sound.
+export const EVENTS = ['join', 'poke', 'describe', 'appear', 'save', 'reset', 'gallery', 'step', 'door', 'punch', 'whistle'];
 export const GAIN = 0.3, PER_SCENE = 2, DAY_CAP = 25, POOL = 6, FETCH_MS = 25000;
 const MUTE_KEY = 'tt.mute', DAY_KEY = 'tt.sfxday';
 
@@ -22,15 +24,17 @@ export function kindFile(kind, motion) {
 // The key api/sfx.js caches by: whitespace collapsed, lowercased.
 export const labelKey = (s) => (typeof s === 'string' ? s : '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-// -> {src, file, generated}. A poke plays its label's generated sound once its url is known, else its kind's file.
+// -> {src, file, generated}. A poke or a describe plays its label's generated sound once its url is known, else its
+// kind's file (an unknown kind is the poke tick).
 export function chooseSound(event, obj, urls, motions) {
-  if (event === 'poke' && obj) {
+  if ((event === 'poke' || event === 'describe') && obj) {
     const key = labelKey(obj.label), url = urls && urls.get(key);
     if (url) return { src: url, file: `${key} (made for this artwork)`, generated: true };
     const f = kindFile(obj.kind, obj.motion || (motions && motions.get(key)));
     return { src: `/sfx/${f}.mp3`, file: `${f}.mp3`, generated: false };
   }
-  return { src: `/sfx/${event}.mp3`, file: `${event}.mp3`, generated: false };
+  const f = event === 'describe' ? 'poke' : event; // no object: the soft paper tick, no palette entry of its own
+  return { src: `/sfx/${f}.mp3`, file: `${f}.mp3`, generated: false };
 }
 
 // Today's generation count from the stored {day, n}; another day or junk counts as zero.

@@ -5,7 +5,7 @@
 export const KINDS = ['sky', 'cloud', 'celestial', 'water', 'ground', 'plant', 'building', 'vehicle', 'animal', 'person', 'fire', 'object'];
 export const MOTIONS = ['none', 'sway', 'drift', 'bob', 'spin', 'fly', 'flicker', 'twinkle'];
 export const SOURCES = ['drop', 'phone', 'sample'];
-export const LIMITS = Object.freeze({ objects: 8, maskPoints: 24, pathPoints: 8, palette: 5, label: 40, soundWords: 12, guess: 120 });
+export const LIMITS = Object.freeze({ objects: 8, maskPoints: 24, pathPoints: 8, palette: 5, label: 40, soundWords: 12, guess: 120, description: 240 });
 export const FLAT_PATH = Object.freeze([Object.freeze([0, 850]), Object.freeze([1000, 850])]);
 
 // A mask below this area (image units squared, of 1e6) or below this share of its box is noise, not an outline.
@@ -35,6 +35,14 @@ function text(v, max) {
 }
 
 const words = (v, n, max) => text(v, 400).split(' ').filter(Boolean).slice(0, n).join(' ').slice(0, max).trim();
+
+// One line of at most max characters; a longer one is cut back to its last whole word (a hard cut for one long word).
+function prose(v, max) {
+  const s = text(v, max * 4);
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf(' ', max);
+  return (cut > 0 ? s.slice(0, cut) : s.slice(0, max)).trim();
+}
 
 function iso(v) {
   const t = v instanceof Date ? v.getTime() : typeof v === 'string' ? Date.parse(v) : NaN;
@@ -113,6 +121,15 @@ function maskOf(raw, box, frame) {
   return area >= Math.max(MIN_MASK_AREA, MIN_MASK_SHARE * (x1 - x0) * (y1 - y0)) ? out : null;
 }
 
+// An optional asset (an object's 3D model, the scene's depth image): an https URL or a site-relative path ('/' not
+// followed by '/' or '\'), at most 300 characters with no whitespace, else none.
+function assetUrl(v) {
+  if (typeof v !== 'string' || v.length > 300 || /\s/.test(v)) return null;
+  if (/^\/(?![/\\])/.test(v)) return v;
+  if (!/^https:\/\//i.test(v)) return null;
+  try { return new URL(v).protocol === 'https:' ? v : null; } catch { return null; }
+}
+
 function objectOf(o, maskFrame, palette, index) {
   if (!isObj(o)) return null;
   // Only Gemini's raw shape carries box_2d; anything else is a stored scene whose mask is already image space.
@@ -124,7 +141,7 @@ function objectOf(o, maskFrame, palette, index) {
   const kind = pick(o.kind, KINDS, 'object');
   const d = num(o.depth);
   const depth = fin(d) ? clamp(d, 0, 1) : clamp(1 - box[3] / 1000, 0, 1);
-  return {
+  const out = {
     label: text(o.label, LIMITS.label) || kind,
     kind,
     box,
@@ -134,6 +151,11 @@ function objectOf(o, maskFrame, palette, index) {
     motion: pick(o.motion, MOTIONS, 'none'),
     sound_prompt: words(o.sound_prompt, LIMITS.soundWords, 120),
   };
+  const description = prose(o.description, LIMITS.description);
+  if (description) out.description = description;
+  const model = assetUrl(o.model_url);
+  if (model) out.model_url = model;
+  return out;
 }
 
 function groundPath(raw) {
@@ -158,7 +180,7 @@ function build(r, m, maskFrame) {
     if (objects.length === LIMITS.objects) break;
   }
   const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
-  return {
+  const out = {
     id: str(first(m.id, r.id), 128),
     source: pick(first(m.source, r.source), SOURCES, 'drop'),
     edited: first(m.edited, r.edited) === true,
@@ -174,6 +196,10 @@ function build(r, m, maskFrame) {
     ground_path: groundPath(r.ground_path),
     objects,
   };
+  // The TV's depth image for this picture (Depth Anything V2, see src/host/enrich.js); like model_url, never from Gemini.
+  const depth = assetUrl(r.depth_url);
+  if (depth) out.depth_url = depth;
+  return out;
 }
 
 // raw: Gemini's parsed answer (or its JSON text, or a stored scene). meta: {id, source, image_url, scene_url, model,
@@ -223,8 +249,9 @@ export const sceneJsonSchema = {
           colour: { type: 'string', description: '#rrggbb' },
           motion: { type: 'string', enum: MOTIONS },
           sound_prompt: { type: 'string' },
+          description: { type: 'string', description: '1-2 plain sentences, at most 220 characters' },
         },
-        required: ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt'],
+        required: ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description'],
       },
     },
   },

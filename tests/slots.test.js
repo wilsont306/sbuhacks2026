@@ -421,4 +421,13 @@ describe('slots: closes that never reached the relay', () => {
     s.message('c1', { t: 'hello', token: 't1', slot: 0 });
     assert.deepEqual(closesSeen, [{ cid: 'c1', code: CLOSE_EVICTED, reason: 'judge', msg: { t: 'evicted', reason: 'judge' } }]);
   });
+
+  it('to() is false while the host socket is down, so glue never records an undelivered world', () => {
+    let up = true;
+    const s = createSlots({ slots: SLOTS, max: MAX_PLAYERS, holdMs: HOLD, send: () => up, close() {}, emit() {} });
+    s.open('c1'); s.message('c1', { t: 'hello', token: null, slot: 0 });
+    assert.equal(s.to(1, { t: 'world' }), true);
+    up = false;
+    assert.equal(s.to(1, { t: 'world' }), false);
+  });
 });

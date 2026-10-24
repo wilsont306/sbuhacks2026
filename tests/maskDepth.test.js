@@ -1,9 +1,11 @@
 // src/host/maskDepth.js: scene JSON to the relief's depth map, path points and per-object hotspots.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sceneDepth, pathPoints, objectHotspots, objectIdMap } from '../src/host/maskDepth.js';
+import { readFileSync } from 'node:fs';
+import { sceneDepth, pathPoints, objectHotspots, objectIdMap, objectOutlines } from '../src/host/maskDepth.js';
 import { depthAt, sampler } from '../src/host/depth.js';
 import { MIN_T, HOTSPOT_HALF_WIDTH } from '../src/shared/protocol.js';
+import { validateScene } from '../src/shared/scene-validate.js';
 
 // The value of the pixel holding image-space point (x, y) (y top-down), through depth.js's bottom-up row layout.
 const px = (d, x, y) => {
@@ -165,31 +167,62 @@ test('objectHotspots: t nearest the box foot, look at the box centre, sorted, sp
   assert.ok(hs.every((h) => h.zoom === 1.3 && h.t >= T_FIRST - EPS && h.t <= T_LAST + EPS));
 });
 
-test('objectHotspots: crowded objects are nudged at least 0.06 apart, extras dropped', () => {
+// Every object a stop in [MIN_T + half-width, 1 - half-width], in left-to-right order, no two closer than two half-widths
+// plus 0.01, and a walk from MIN_T to 1 (scene.js stopAt: the first stop within a half-width) meets each exactly once.
+const GAP = 2 * HOTSPOT_HALF_WIDTH + 0.01;
+function assertWalkable(scene, hs, msg) {
+  const usable = scene.objects.map((o, i) => (o && o.box ? i : -1)).filter((i) => i >= 0);
+  assert.deepEqual(hs.map((h) => h.index).sort((a, b) => a - b), usable, `${msg}: one stop per object`);
+  const cx = (h) => scene.objects[h.index].box[0] + scene.objects[h.index].box[2];
+  for (let k = 1; k < hs.length; k++) {
+    assert.ok(hs[k].t - hs[k - 1].t >= GAP - EPS, `${msg}: stops ${k - 1} and ${k} too close`);
+    assert.ok(cx(hs[k]) >= cx(hs[k - 1]), `${msg}: x order at ${k}`);
+  }
+  assert.ok(hs.every((h) => h.t >= MIN_T + HOTSPOT_HALF_WIDTH - EPS && h.t <= 1 - HOTSPOT_HALF_WIDTH + EPS), `${msg}: range`);
+  const met = [];
+  for (let i = 0; i <= 10000; i++) {
+    const t = MIN_T + (1 - MIN_T) * i / 10000, s = hs.find((h) => Math.abs(t - h.t) <= HOTSPOT_HALF_WIDTH), at = s ? s.index : null;
+    if (at !== null && at !== met[met.length - 1]) met.push(at);
+  }
+  assert.deepEqual(met, hs.map((h) => h.index), `${msg}: walk end to end`);
+}
+
+test('objectHotspots: crowded objects are all kept, spread evenly 0.07 apart in x order', () => {
   const path = pathPoints({ ground_path: [[50, 850], [950, 850]] }, () => 0.5);
   const cluster = Array.from({ length: 8 }, (_, k) => obj({ label: `o${k}`, box: [480, 300, 520, 850] })); // all at t 0.5
   const hs = objectHotspots({ objects: cluster }, path);
-  for (let k = 1; k < hs.length; k++) assert.ok(hs[k].t - hs[k - 1].t >= 0.06 - EPS);
-  assert.ok(hs.every((h) => Math.abs(h.t - 0.5) <= 0.12 + EPS));
-  // spread around the cluster, not all pushed to one side: five fit within two gaps of t 0.5
-  assert.deepEqual(hs.map((h) => h.t), [0.38, 0.44, 0.5, 0.56, 0.62]);
-  assert.deepEqual(hs.map((h) => h.index), [0, 1, 2, 3, 4]);
+  assert.deepEqual(hs.map((h) => h.t), [0.26, 0.33, 0.4, 0.47, 0.54, 0.61, 0.68, 0.75]); // centred on 0.5, held inside the range
+  assert.deepEqual(hs.map((h) => h.index), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assertWalkable({ objects: cluster }, hs, 'cluster');
   // two neighbours a little too close move apart symmetrically
   const pair = objectHotspots({ objects: [obj({ box: [480, 300, 520, 850] }), obj({ box: [507, 300, 547, 850] })] }, path);
-  assert.equal(pair.length, 2); assert.ok(Math.abs(pair[1].t - pair[0].t - 0.06) < EPS);
+  assert.equal(pair.length, 2); assert.ok(Math.abs(pair[1].t - pair[0].t - GAP) < EPS);
   assert.ok(pair[0].t < 0.5 && pair[1].t > 0.53);
-  // more objects than the range holds: never overlapping, never outside it
+  // crowded at either end: pulled back inside the range
+  for (const box of [[940, 300, 1000, 850], [0, 300, 40, 850]]) {
+    const end = { objects: Array.from({ length: 8 }, () => obj({ box })) };
+    assertWalkable(end, objectHotspots(end, path), `end ${box[0]}`);
+  }
+  // sky things far above the path and objects whose feet run against their x order still get a stop each, left to right
+  const sky = { objects: [obj({ kind: 'sky', box: [0, 0, 1000, 400], depth: 1 }), obj({ kind: 'celestial', box: [800, 20, 900, 120] }),
+    obj({ kind: 'cloud', box: [100, 50, 400, 200] }), obj({ box: [300, 400, 360, 950] }), obj({ box: [200, 300, 250, 500] }),
+    obj({ box: [600, 300, 700, 860] }), obj({ box: [610, 100, 640, 200] }), obj({ box: [990, 900, 1000, 1000] })] };
+  for (const ground_path of [[[50, 850], [950, 850]], [[0, 990], [300, 700], [500, 900], [1000, 400]], [[100, 700], [300, 720]]]) {
+    assertWalkable(sky, objectHotspots(sky, pathPoints({ ground_path }, () => 0.5)), `sky ${JSON.stringify(ground_path)}`);
+  }
+  // more objects than the range holds (11 at 0.07 apart): the most prominent keep a stop, never overlapping or outside it
   const many = Array.from({ length: 32 }, (_, k) => obj({ box: [k * 31, 300, k * 31 + 30, 850] }));
   const hm = objectHotspots({ objects: many }, path);
-  assert.ok(hm.length <= 12 && hm.length >= 8);
-  for (let k = 1; k < hm.length; k++) assert.ok(hm[k].t - hm[k - 1].t >= 0.06 - EPS);
-  assert.ok(hm.every((h) => h.t >= MIN_T + 0.11 - EPS && h.t <= 0.97 + EPS));
-  // crowded at the far end: pulled back inside the range rather than past t 0.97
-  const end = Array.from({ length: 3 }, () => obj({ box: [940, 300, 1000, 850] }));
-  const he = objectHotspots({ objects: end }, path);
-  assert.equal(he.length, 3);
-  assert.ok(he.every((h) => h.t <= 0.97 + EPS));
-  for (let k = 1; k < he.length; k++) assert.ok(he[k].t - he[k - 1].t >= 0.06 - EPS);
+  assert.deepEqual(hm.map((h) => h.index), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assertWalkable({ objects: many.slice(0, 11) }, hm, 'many');
+});
+
+test('objectHotspots: every object of the three bundled samples gets its own stop on the walk', () => {
+  for (const name of ['turner', 'sketch', 'starry-night']) {
+    const s = validateScene(JSON.parse(readFileSync(new URL(`../public/samples/${name}.scene.json`, import.meta.url), 'utf8')));
+    assert.ok(s.objects.length >= 7, name);
+    assertWalkable(s, objectHotspots(s, pathPoints(s, sampler(sceneDepth(s)))), name);
+  }
 });
 
 test('objectHotspots: garbage in, empty or partial list out', () => {
@@ -207,6 +240,17 @@ test('objectIdMap: i + 1 for scene.objects[i], 0 for none; skipped entries keep 
   assert.deepEqual([...new Set(m.data)].sort(), [0, 1, 4]);
   const d = objectIdMap({ objects: [] });
   assert.equal(d.w, 256); assert.equal(d.h, 192); assert.ok(d.data.every((x) => x === 0));
+});
+
+test('objectOutlines: the mask, else the box, far first like objectIdMap; skipped entries keep their indices', () => {
+  const tri = [[100, 100], [300, 100], [200, 400]];
+  const out = objectOutlines({ objects: [
+    obj({ box: [600, 600, 900, 900], depth: 0.2 }), null, obj({ box: null }), obj({ mask: tri, box: [100, 100, 300, 400], depth: 0.9 }),
+  ] });
+  assert.deepEqual(out.map((o) => o.index), [3, 0]); // the far one (depth 0.9) first
+  assert.deepEqual(out[0].pts, tri);
+  assert.deepEqual(out[1].pts, [[600, 600], [900, 600], [900, 900], [600, 900]]);
+  for (const bad of [null, {}, { objects: 'x' }]) assert.deepEqual(objectOutlines(bad), []);
 });
 
 test('objectIdMap: rows run bottom-up like sceneDepth, an object at the image top lands in the high rows', () => {

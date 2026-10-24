@@ -11,9 +11,12 @@ const HEX = /^#[0-9a-f]{6}$/;
 const isPt = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => Number.isFinite(v) && v >= 0 && v <= 1000);
 
 // Every field of the contract, with its type and range.
+const isAsset = (u) => typeof u === 'string' && u.length <= 300 && /^(https:\/\/|\/(?![/\\]))\S*$/.test(u);
 function assertContract(s) {
-  assert.deepEqual(Object.keys(s), ['id', 'source', 'edited', 'credit', 'image_url', 'scene_url', 'model', 'generated_at', 'ai_draft',
-    'title_guess', 'artist_guess', 'palette', 'ground_path', 'objects']);
+  const top = ['id', 'source', 'edited', 'credit', 'image_url', 'scene_url', 'model', 'generated_at', 'ai_draft',
+    'title_guess', 'artist_guess', 'palette', 'ground_path', 'objects'];
+  assert.deepEqual(Object.keys(s), 'depth_url' in s ? [...top, 'depth_url'] : top);
+  if ('depth_url' in s) assert.ok(isAsset(s.depth_url));
   for (const k of ['id', 'image_url', 'scene_url', 'model', 'title_guess', 'artist_guess']) assert.equal(typeof s[k], 'string', k);
   assert.ok(['drop', 'phone', 'sample'].includes(s.source));
   assert.equal(typeof s.edited, 'boolean');
@@ -25,7 +28,12 @@ function assertContract(s) {
   for (let i = 1; i < s.ground_path.length; i++) assert.ok(s.ground_path[i][0] >= s.ground_path[i - 1][0], 'path sorted by x');
   assert.ok(s.objects.length <= 8);
   for (const o of s.objects) {
-    assert.deepEqual(Object.keys(o), ['label', 'kind', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt']);
+    const keys = ['label', 'kind', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt'];
+    if ('description' in o) keys.push('description');
+    if ('model_url' in o) keys.push('model_url');
+    assert.deepEqual(Object.keys(o), keys);
+    if ('description' in o) assert.ok(typeof o.description === 'string' && o.description.length >= 1 && o.description.length <= 240);
+    if ('model_url' in o) assert.ok(isAsset(o.model_url));
     assert.ok(typeof o.label === 'string' && o.label.length >= 1 && o.label.length <= 40);
     assert.ok(KINDS.includes(o.kind));
     assert.ok(o.box.length === 4 && o.box.every((v) => Number.isFinite(v) && v >= 0 && v <= 1000));
@@ -168,6 +176,62 @@ test('labels, colours and sound prompts are cleaned', () => {
   assert.equal(q.colour, '#808080');
 });
 
+test('description: one trimmed line, at most 240 characters cut at a word boundary; empty or non-string means none', () => {
+  const desc = (description) => validateScene({ objects: [{ ...cypress, description }] }, META).objects[0];
+  const a = desc('  A tall\n\tcypress,\u0000 painted   in long strokes.  ');
+  assertContract({ ...validateScene({}, META), objects: [a] });
+  assert.equal(a.description, 'A tall cypress, painted in long strokes.');
+  assert.equal(Object.keys(a).indexOf('description'), 8, 'after sound_prompt');
+  const [b] = validateScene({ objects: [{ ...cypress, description: 'x', model_url: '/m.glb' }] }, META).objects;
+  assert.deepEqual(Object.keys(b).slice(-2), ['description', 'model_url']);
+  // 'word ' is 5 characters: 48 of them reach exactly 240, a 49th runs over and is cut back to the last whole word.
+  const long = 'word '.repeat(60);
+  assert.equal(desc(long).description, 'word '.repeat(48).trim());
+  const edge = 'a'.repeat(236) + ' bcdefg';
+  assert.equal(desc(edge).description, 'a'.repeat(236), 'a word that crosses 240 is dropped whole');
+  assert.equal(desc('a'.repeat(240) + ' b').description.length, 240, 'a space right at 240 keeps all 240');
+  assert.equal(desc('z'.repeat(500)).description, 'z'.repeat(240), 'one endless word is cut hard');
+  for (const bad of [undefined, null, '', '   \n ', 42, true, ['a'], { text: 'a' }]) assert.equal('description' in desc(bad), false, String(bad));
+  const old = validateScene(JSON.parse(JSON.stringify(validateScene(RAW, META))), {});
+  assertContract(old);
+  assert.ok(old.objects.every((o) => !('description' in o)), 'a scene from before descriptions still validates');
+  const stored = validateScene({ ...RAW, objects: [a] }, META);
+  assert.deepEqual(validateScene(JSON.parse(JSON.stringify(stored)), {}), stored, 'a stored description re-validates to itself');
+});
+
+// Both asset fields share one rule: https or site-relative, at most 300 characters, no whitespace.
+const ASSET_BAD = ['http://example.com/a.glb', 'javascript:alert(1)', 'data:model/gltf-binary;base64,AAAA', 'blob:https://x/1', '//evil.example/a.glb',
+  '/\\evil.example/a.glb', 'models/a.glb', 'https://', 'https://exa mple.com/a.glb', ' https://example.com/a.glb', '/a b.png', '/a\tb.png', '', 42, null, {}];
+
+test('model_url: kept only as an https URL or a site-relative path of at most 300 characters', () => {
+  for (const url of ['https://example.com/models/cypress.glb', '/models/cypress.glb', 'https://x.public.blob.vercel-storage.com/tripo/abc.glb']) {
+    const [o] = validateScene({ objects: [{ ...cypress, model_url: url }] }, META).objects;
+    assertContract({ ...validateScene({}, META), objects: [o] });
+    assert.equal(o.model_url, url);
+    assert.deepEqual(validateScene(JSON.parse(JSON.stringify(validateScene({ objects: [o] }, META))), {}).objects[0], o, 'a stored model_url re-validates to itself');
+  }
+  const long = 'https://example.com/' + 'a'.repeat(281);
+  for (const bad of [...ASSET_BAD, long]) {
+    const [p] = validateScene({ objects: [{ ...cypress, model_url: bad }] }, META).objects;
+    assert.equal('model_url' in p, false, String(bad).slice(0, 40));
+  }
+  assert.equal(long.length, 301);
+  assert.equal(validateScene({ objects: [{ ...cypress, model_url: long.slice(0, 300) }] }, META).objects[0].model_url.length, 300);
+});
+
+test('depth_url: a top-level asset URL, kept by the same rule, last in the scene, never asked of Gemini', () => {
+  for (const url of ['/samples/turner.depth.png', 'https://x.public.blob.vercel-storage.com/depth/6f1c.png']) {
+    const s = validateScene({ ...RAW, depth_url: url }, META);
+    assertContract(s);
+    assert.equal(s.depth_url, url);
+    assert.deepEqual(validateScene(JSON.parse(JSON.stringify(s)), {}), s, 'a stored depth_url re-validates to itself');
+  }
+  for (const bad of [...ASSET_BAD, '/' + 'a'.repeat(300)]) assert.equal('depth_url' in validateScene({ ...RAW, depth_url: bad }, META), false, String(bad).slice(0, 40));
+  assert.equal('depth_url' in validateScene(RAW, META), false);
+  assert.equal(validateScene({ ...RAW, depth_url: '/' + 'a'.repeat(299) }, META).depth_url.length, 300);
+  assert.ok(!JSON.stringify(sceneJsonSchema).includes('depth_url') && !JSON.stringify(sceneJsonSchema).includes('model_url'));
+});
+
 test('hexColour', () => {
   assert.equal(hexColour('#ABC'), '#aabbcc');
   assert.equal(hexColour('a1b2c3'), '#a1b2c3');
@@ -245,7 +309,7 @@ test('fuzz: random structures always come out as the contract', () => {
     if (depth > 3 || r < 0.15) return [NaN, Infinity, -1e9, 1e9, 500, '400', '', 'sky', '#fff', null, undefined, true][Math.floor(rnd() * 12)];
     if (r < 0.5) return Array.from({ length: Math.floor(rnd() * 30) }, () => junk(depth + 1));
     const o = {};
-    for (const k of ['label', 'kind', 'box_2d', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'objects', 'ground_path', 'palette']) if (rnd() < 0.5) o[k] = junk(depth + 1);
+    for (const k of ['label', 'kind', 'box_2d', 'box', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description', 'objects', 'ground_path', 'palette']) if (rnd() < 0.5) o[k] = junk(depth + 1);
     return o;
   };
   for (let i = 0; i < 400; i++) {
@@ -261,6 +325,8 @@ test('sceneJsonSchema is flat, small and in step with the enums and limits', () 
   const item = s.properties.objects.items;
   assert.deepEqual(item.properties.kind.enum, KINDS);
   assert.deepEqual(item.properties.motion.enum, MOTIONS);
+  assert.deepEqual(item.required, ['label', 'kind', 'box_2d', 'mask', 'depth', 'colour', 'motion', 'sound_prompt', 'description']);
+  assert.equal(item.properties.description.type, 'string');
   assert.equal(s.properties.objects.maxItems, 8);
   assert.equal(item.properties.mask.maxItems, 24);
   assert.equal(s.properties.ground_path.maxItems, 8);

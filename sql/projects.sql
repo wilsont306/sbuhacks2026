@@ -1,6 +1,8 @@
 -- Living Blueprint v2: the Snowflake side of saved projects (lib/snowflake.js, api/projects.js).
 -- G runs this once in a Snowsight worksheet on the trial account (AWS us-east-1, to sit next to Vercel iad1).
--- The app talks to Snowflake only through the SQL REST API with a key-pair JWT: no password, no driver.
+-- The app talks to Snowflake only through the SQL REST API, with a programmatic access token (SNOWFLAKE_PAT, the
+-- quick path; README "Run it" step 3 has its network-policy SQL) or a key-pair JWT (steps 1 and 3 below): no driver.
+-- PAT path: skip steps 1 and 3, drop the RSA_PUBLIC_KEY line and end DEFAULT_NAMESPACE = LB_DB.APP with the semicolon.
 -- Every object is named in full (LB_DB.APP.PROJECTS, LB_DB.APP, LB_WH, LB_APP), so each statement works whatever
 -- database, schema or warehouse the worksheet happens to be set to.
 --

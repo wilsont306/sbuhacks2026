@@ -1,4 +1,4 @@
-// Bring your own keys, for the API plug-in box (src/host/apibox.js, K): a visitor's Gemini and ElevenLabs keys live in
+// Bring your own keys, for the API plug-in box (src/host/apibox.js, K): a visitor's Gemini, ElevenLabs and Tripo keys live in
 // this browser only (sessionStorage 'tt.byok', or localStorage when "Remember on this device" is ticked) and go to this
 // site's own API as request headers. Pure and node-safe: createByok() takes the storages, so the tests inject fakes.
 // No ?. or ?? here: the phone page may import it, and iOS 13 must still parse it.
@@ -8,9 +8,14 @@ export const EVENT = 'tt:keys';
 export const KEY_RE = /^[A-Za-z0-9_.-]{20,200}$/;
 export const MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
+// Tripo keys start tsk_; the rest of their charset is unverified, so any printable ASCII but a space passes.
+export const TRIPO_KEY_RE = /^tsk_[\x21-\x7e]{8,200}$/;
+
 // A key as the server accepts it (trimmed), else ''.
 export const cleanKey = (k) => (typeof k === 'string' && KEY_RE.test(k.trim()) ? k.trim() : '');
 export const validKey = (k) => cleanKey(k) !== '';
+export const cleanTripoKey = (k) => (typeof k === 'string' && TRIPO_KEY_RE.test(k.trim()) ? k.trim() : '');
+export const validTripoKey = (k) => cleanTripoKey(k) !== '';
 
 export function normalize(o) {
   const v = o && typeof o === 'object' ? o : {};
@@ -18,6 +23,7 @@ export function normalize(o) {
     gemini: cleanKey(v.gemini),
     geminiModel: MODELS.indexOf(v.geminiModel) >= 0 ? v.geminiModel : '',
     elevenlabs: cleanKey(v.elevenlabs),
+    tripo: cleanTripoKey(v.tripo),
     remember: v.remember === true,
   };
 }
@@ -35,6 +41,7 @@ export function headersFor(keys) {
   if (k.gemini) h['x-gemini-key'] = k.gemini;
   if (k.geminiModel) h['x-gemini-model'] = k.geminiModel;
   if (k.elevenlabs) h['x-elevenlabs-key'] = k.elevenlabs;
+  if (k.tripo) h['x-tripo-key'] = k.tripo;
   return h;
 }
 
@@ -79,7 +86,7 @@ const byok = createByok({
   notify: () => { if (typeof dispatchEvent === 'function' && typeof Event === 'function') dispatchEvent(new Event(EVENT)); },
 });
 // Keys leave this browser only over HTTPS (or to this machine): never across venue Wi-Fi to the laptop hub in clear.
-export const secureOrigin = (loc) => !loc || loc.protocol === 'https:' || /^(localhost|127.0.0.1|[::1])$/.test(loc.hostname);
+export const secureOrigin = (loc) => !loc || loc.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(loc.hostname);
 export const load = byok.load, save = byok.save, clear = byok.clear;
 export const apiHeaders = () => (secureOrigin(globalThis.location) ? byok.apiHeaders() : {});
 

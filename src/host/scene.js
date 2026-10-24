@@ -1,6 +1,6 @@
 // The TV stage: any artwork as a depth relief. One displaced plane, rebuilt per scene for the image's aspect, takes
-// its depth and an object-id map from the scene's reading (maskDepth.js); per-object motion and the poke glow run in
-// the shader; the cut-paper figures walk the scene's ground path to one stop per object; the camera follows the
+// its depth and an object-id map from the scene's reading (maskDepth.js); the picture holds still and the shader only
+// glows the object a figure stands at; the cut-paper figures walk the scene's ground path to one stop per object; the camera follows the
 // group. window.game (README contract) is defined synchronously below, before anything has loaded; glue.js assigns
 // sendTo/sendAll. Boot shows the Turner on its hand-authored relief, so the kiosk works with zero network.
 import * as THREE from 'three';
@@ -13,7 +13,7 @@ import './host.css';
 import { HOTSPOT_HALF_WIDTH, ORIGINAL_MS, MIN_T } from '../shared/protocol.js';
 import { validateScene } from '../shared/scene-validate.js';
 import { placeholderDepth, sampler, depthTexture } from './depth.js';
-import { sceneDepth, objectIdMap, pathPoints, objectHotspots } from './maskDepth.js';
+import { sceneDepth, objectIdMap, objectOutlines, pathPoints, objectHotspots } from './maskDepth.js';
 import { loadSheets, paintSheet, sheetTexture, setFrame, shadowTexture, textSprite, drawLabel, WALK, IDLE, WAVE, ASPECT as FIG_ASPECT } from './figures.js';
 import { createPathOverlay } from './pathOverlay.js';
 import { FOV, LEAN_Y, TAG_GAP, TAG_H, rig, figH, groupBox, followAim, leanFor, stepView, pose } from './camera.js';
@@ -21,8 +21,8 @@ import { FOV, LEAN_Y, TAG_GAP, TAG_H, rig, figH, groupBox, followAim, leanFor, s
 const TURNER = 1920 / 1433, H = 4 / TURNER, AMP = 0.42, EXPLODE = 3; // the plane's height is fixed; width follows the image
 const SW = 1447, SH = 1080, STEP = 1 / 60, SPEED = 0.10; // stage px; path lengths per second
 const TEXELS = 256, SEGS = 512, MAX_TEX = 2048; // depth and id texels, plane segments and image pixels on the long side
-const SLOTS = 9; // shader motion slots: 0 is "no object", then scene.objects[0..7]
-const POKE_S = 1, EASE_AMP = 1 - Math.exp(-STEP / 0.6);
+const SLOTS = 9; // shader glow slots: 0 is "no object", then scene.objects[0..7]
+const NEAR_GLOW = 0.12, EASE_AMP = 1 - Math.exp(-STEP / 0.6);
 const BOOT_IMG = '/assets/turner-1920.jpg';
 const BOOT_CREDIT = 'J. M. W. Turner, Rain, Steam, and Speed, 1844. The National Gallery, London, NG538.';
 const BOOT_POINTS = [[0.05, 0.11, 0.7368], [0.0993, 0.1271, 0.7106], [0.1536, 0.149, 0.6774], [0.2115, 0.1754, 0.638],
@@ -37,27 +37,20 @@ const $ = (id) => document.getElementById(id);
 const tok = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const num = (x, dflt) => (Number.isFinite(+x) ? +x : dflt);
-const TAU = Math.PI * 2;
 // Staggered from MIN_T, all short of the first stop (maskDepth keeps hotspots at t >= MIN_T + 0.11).
 const startT = (pid) => (pid === 0 ? MIN_T : MIN_T + 0.012 * (((pid - 1) % 6) + 1));
 // Only what an <img> may load: site-relative, http(s), blob: and data:image (a downscaled drop is ~300 kB of data URL).
 const okUrl = (u) => typeof u === 'string' && (/^data:image\//i.test(u) || (u.length <= 2048 && /^(https?:\/\/|\/(?!\/)|blob:)/i.test(u)));
 // Depth and id texels for an aspect: TEXELS on the long side.
 const texels = (aspect) => (aspect >= 1 ? { w: TEXELS, h: Math.max(2, Math.round(TEXELS / aspect)) } : { w: Math.max(2, Math.round(TEXELS * aspect)), h: TEXELS });
-
-// [dx, dy, dz, shear at the object's top, glow] in world units for a motion kind at time t; hw is the object's height.
-function motionAt(kind, t, ph, hw) {
-  const s = (period) => Math.sin(TAU * t / period + ph);
-  switch (kind) {
-    case 'sway': return [0, 0, 0, 0.05 * hw * s(3.5), 0];
-    case 'drift': return [0.06 * s(14), 0.01 * s(9), 0, 0, 0];
-    case 'bob': return [0, 0.03 * s(2.6), 0.015 * s(2.6), 0, 0];
-    case 'spin': return [0.025 * Math.cos(TAU * t / 6 + ph), 0.025 * s(6), 0, 0, 0];
-    case 'fly': return [0.07 * s(5), 0.035 * Math.sin(2 * (TAU * t / 5 + ph)), 0.05, 0, 0];
-    case 'flicker': return [0, 0.006 * s(0.37), 0, 0, 0.16 + 0.12 * s(0.53) * Math.sin(TAU * t / 0.31 + 2 * ph)];
-    case 'twinkle': return [0, 0, 0, 0, 0.45 * Math.max(0, s(2.2)) ** 6];
-    default: return [0, 0, 0, 0, 0];
-  }
+// A depth image (enrich.js: one byte per pixel, rows top first, 255 nearest) in depth.js's layout (rows bottom-up, 0 far
+// to 1 near), or null when it is not one. Unblurred, as v1 used Depth Anything's output.
+function reliefOf(d) {
+  const w = d && d.w, h = d && d.h;
+  if (!d || !ArrayBuffer.isView(d.data) || !Number.isInteger(w) || !Number.isInteger(h) || w < 2 || h < 2 || w > MAX_TEX || h > MAX_TEX || d.data.length !== w * h) return null;
+  const data = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) data[j * w + i] = d.data[(h - 1 - j) * w + i] / 255;
+  return { data, w, h, placeholder: false };
 }
 
 const tv = $('tv'), stage = $('stage'), canvas = $('gl'), hintEl = $('hint'), captionEl = $('caption'), statusEl = $('status'), modeTag = $('modeTag');
@@ -72,46 +65,49 @@ const players = new Map(); // pid -> figure
 let W = H * TURNER, lens = rig(W, H, SW / SH); // camera.js: the follow math, swept by tests/camera.test.js
 let current = null, stops = [], path = null, curve = null, depth = null, sample = () => 0.5, sheets = null;
 let imageUrl = BOOT_IMG, credit = BOOT_CREDIT, gen = 0; // gen: the latest loadScene/showImage; an older one never lands
+let depthFromAi = false; // setDepth re-skinned the relief with an estimated depth image; build() clears it
 let layer = 'painting', judge = false, reduced = matchMedia('(prefers-reduced-motion: reduce)').matches, originalTimer = 0;
 let simTime = 0, fps = 0, notice = '';
 const attract = { idle: 0, on: false, lean: 0 };
 const cam = { tx: 0, ty: 0, zoom: 1, lean: 0, leanY: 0 }, aim = { tx: 0, ty: 0, zoom: 1 }, mouse = { x: 0, y: 0 };
 const keys = { left: false, right: false, verb: false };
-const moveA = new Float32Array(SLOTS * 4), moveB = new Float32Array(SLOTS * 3), pokeLeft = new Float32Array(SLOTS);
+const glow = new Float32Array(SLOTS);
 
 // ---------- renderer, scene, relief ----------
 const scene = new THREE.Scene();
-const stageBg = new THREE.Color(tok('--prussian-deep'));
+const stageBg = new THREE.Color(tok('--rail-night'));
 scene.background = stageBg;
 const camera = new THREE.PerspectiveCamera(FOV, SW / SH, 0.1, 50);
 
 const blank = new THREE.DataTexture(Uint8Array.from([stageBg.r, stageBg.g, stageBg.b, 1], (x) => x * 255), 1, 1);
 blank.needsUpdate = true;
+const noLines = new THREE.DataTexture(new Uint8Array(4), 1, 1); // no stops, no outlines: transparent
+noLines.needsUpdate = true;
 const uniforms = {
   map: { value: blank }, depthMap: { value: null }, idMap: { value: null }, amp: { value: AMP }, mode: { value: 0 },
-  moveA: { value: moveA }, moveB: { value: moveB },
+  glow: { value: glow }, outline: { value: noLines },
   cyan: { value: new THREE.Color(tok('--prussian')) }, cream: { value: new THREE.Color(tok('--cream')) },
 };
-// GLSL ES 1.0: the fixed 9-slot loop compares the texel's id instead of indexing the arrays with it.
+// GLSL ES 1.0: the fixed 9-slot loop compares the texel's id instead of indexing the array with it.
 const mat = new THREE.ShaderMaterial({
   uniforms,
-  vertexShader: `uniform sampler2D depthMap; uniform sampler2D idMap; uniform float amp;
-    uniform vec4 moveA[${SLOTS}]; uniform vec3 moveB[${SLOTS}];
+  vertexShader: `uniform sampler2D depthMap; uniform sampler2D idMap; uniform float amp; uniform float glow[${SLOTS}];
     varying vec2 vUv; varying float vD; varying float vGlow;
     void main() {
       vUv = uv; vD = texture2D(depthMap, uv).r;
       float id = floor(texture2D(idMap, uv).r * 255.0 + 0.5);
-      vec4 a = vec4(0.0); vec3 b = vec3(0.0);
-      for (int i = 0; i < ${SLOTS}; i++) { if (abs(id - float(i)) < 0.5) { a = moveA[i]; b = moveB[i]; } }
+      vGlow = 0.0;
+      for (int i = 0; i < ${SLOTS}; i++) { if (abs(id - float(i)) < 0.5) vGlow = glow[i]; }
       vec3 p = position; p.z += vD * amp;
-      p += a.xyz; p.x += a.w * clamp((uv.y - b.x) * b.y, 0.0, 1.0); // sway shears from the object's foot up
-      vGlow = b.z;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
-  fragmentShader: `uniform sampler2D map; uniform int mode; uniform vec3 cyan; uniform vec3 cream;
+  fragmentShader: `uniform sampler2D map; uniform sampler2D outline; uniform int mode; uniform vec3 cyan; uniform vec3 cream;
     varying vec2 vUv; varying float vD; varying float vGlow;
     void main() {
       vec3 c = mode == 1 ? mix(cyan, cream, vD) : texture2D(map, vUv).rgb;
-      gl_FragColor = vec4(mix(c, cream, vGlow * 0.6), 1.0); }`,
+      // dark texels glow toward cream, pale ones toward Prussian: a cream glow on white paper moved pixels by 2/255
+      vec3 tint = mix(cream, cyan, smoothstep(0.52, 0.62, dot(c, vec3(0.299, 0.587, 0.114))));
+      vec4 line = texture2D(outline, vUv); // every stop's outline, over the picture and its glow
+      gl_FragColor = vec4(mix(mix(c, tint, vGlow * 0.6), line.rgb, line.a), 1.0); }`,
 });
 const relief = new THREE.Mesh(new THREE.PlaneGeometry(W, H, 1, 1), mat);
 scene.add(relief);
@@ -135,7 +131,84 @@ function idTexture({ data, w, h }) {
 function swapTex(key, tex) {
   const old = uniforms[key].value;
   uniforms[key].value = tex; upload(tex);
-  if (old && old !== blank && old !== tex) old.dispose();
+  if (old && old !== blank && old !== noLines && old !== tex) old.dispose();
+}
+
+// ---------- the stops, shown on the stage ----------
+// Where a figure can walk to: a numbered enamel marker on the path at each stop (the left margin numbers its stops
+// the same). The object a figure stands at is outlined in that rider's colour, with an ink edge each side so it reads
+// on pale paper and dark paint, over a light wash of its region so a big one reads as a region (the sky) and a tiny
+// one gets a ring (the hare). Drawn into a texture the relief lays over the picture, only when who stands where
+// changes. Far objects first, each erasing what it covers, so a line never crosses an object in front of it.
+const LINES_LONG = 1024, SMALL = 90; // the outline texture's long side; a box under 90 of 1000 on both sides is circled
+let lines = null, linesKey = '';
+const markers = [];
+function linesFor(aspect) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(aspect >= 1 ? LINES_LONG : LINES_LONG * aspect); c.height = Math.round(aspect >= 1 ? LINES_LONG / aspect : LINES_LONG);
+  return { c, tex: new THREE.CanvasTexture(c) };
+}
+function stepLines() {
+  if (!lines || !current) return;
+  const who = new Map(); // object index -> the first rider's colour there
+  // in arrival order, as margins.js keeps its riders: the first to arrive colours a shared stop in both places
+  for (const f of [...players.values()].sort((a, b) => (a.nearAt ?? 0) - (b.nearAt ?? 0))) if (f.near != null && !who.has(f.near)) who.set(f.near, f.color);
+  const key = [...who].map((e) => e.join(':')).sort().join('|');
+  if (key === linesKey) return;
+  linesKey = key;
+  const { c } = lines, g = c.getContext('2d'), k = Math.max(c.width, c.height) / 2048, ink = tok('--ink');
+  // A point on the picture's edge goes past it, so the sky's or a river's border draws no frame round the picture.
+  const edge = (v, size) => (v <= 0.5 ? -24 * k : v >= 999.5 ? size + 24 * k : v / 1000 * size);
+  g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.clearRect(0, 0, c.width, c.height);
+  g.lineJoin = 'round';
+  for (const { index, pts } of objectOutlines(current)) {
+    g.beginPath();
+    pts.forEach(([x, y], i) => g[i ? 'lineTo' : 'moveTo'](edge(x, c.width), edge(y, c.height)));
+    g.closePath();
+    g.globalCompositeOperation = 'destination-out'; g.globalAlpha = 1; g.fill();
+    const color = who.get(index);
+    if (!color) continue;
+    g.globalCompositeOperation = 'source-over';
+    g.fillStyle = color; g.globalAlpha = 0.16; g.fill();
+    g.globalAlpha = 1;
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]), bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+    const line = () => { g.strokeStyle = ink; g.lineWidth = 15 * k; g.stroke(); g.strokeStyle = color; g.lineWidth = 7 * k; g.stroke(); };
+    line();
+    if (bw < SMALL && bh < SMALL) { // too small to see by its outline: a ring round it too
+      g.beginPath();
+      g.arc((Math.max(...xs) + Math.min(...xs)) / 2000 * c.width, (Math.max(...ys) + Math.min(...ys)) / 2000 * c.height,
+        Math.max(bw / 1000 * c.width, bh / 1000 * c.height) * 0.75 + 28 * k, 0, Math.PI * 2);
+      line();
+    }
+  }
+  lines.tex.needsUpdate = true;
+}
+function drawMarker(sp) {
+  const c = sp.material.map.image, g = c.getContext('2d');
+  c.width = c.height = 128;
+  g.beginPath(); g.arc(64, 64, 54, 0, Math.PI * 2);
+  g.fillStyle = tok('--cream'); g.fill();
+  g.lineWidth = 10; g.strokeStyle = tok('--livery'); g.stroke();
+  g.fillStyle = tok('--livery'); g.font = '600 62px "Libre Franklin", Arial, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(sp.userData.n), 64, 68);
+  sp.material.map.needsUpdate = true;
+}
+function setMarkers(list) {
+  for (const sp of markers) { scene.remove(sp); sp.material.map.dispose(); sp.material.dispose(); }
+  markers.length = 0;
+  list.forEach((st, i) => {
+    const tex = new THREE.CanvasTexture(document.createElement('canvas'));
+    tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+    sp.center.set(0.5, 0.2); sp.renderOrder = 20; // under every figure (their order is 50 and up)
+    Object.assign(sp.userData, { n: i + 1, stop: st });
+    drawMarker(sp); scene.add(sp); upload(tex); markers.push(sp);
+  });
+  placeMarkers();
+}
+// On the path at its stop (the overlay can drag a stop, so its t is read each step), sized like a figure there.
+function placeMarkers() {
+  for (const sp of markers) { const t = sp.userData.stop.t, h = figH(t) * 0.3; at(t, 0.012, sp.position); sp.scale.set(h, h, 1); }
 }
 
 function loadImage(url) {
@@ -180,16 +253,18 @@ function build(tex, aspect, d, ids, points, newStops) {
   swapTex('map', tex);
   swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
   swapTex('idMap', idTexture(ids));
-  depth = d; sample = sampler(d); stops = newStops;
+  lines = current && newStops.length ? linesFor(aspect) : null; linesKey = null; // drawn on the next step
+  swapTex('outline', lines ? lines.tex : noLines);
+  depth = d; sample = sampler(d); stops = newStops; depthFromAi = false;
   if (notice === NO_IMAGE) notice = '';
   setPath({ image: imageUrl, points, plaques: stops });
-  moveA.fill(0); moveB.fill(0); pokeLeft.fill(0);
+  setMarkers(stops);
+  glow.fill(0);
   for (const [pid, f] of players) {
-    f.t = startT(pid);
+    f.t = startT(pid); f.facing = 1; // as reset() does: an inside phone takes its heading from this
     if (f.near != null) { f.near = null; emit({ type: 'near', pid, object: null, label: null }); }
     place(f);
   }
-  ghost.t = clamp(ghost.t, MIN_T, 0.98); place(ghost);
   if (originalImg.getAttribute('src') !== imageUrl) originalImg.src = imageUrl;
   originalTag.textContent = `Original. ${credit}`;
   renderCaption(); renderHint();
@@ -209,9 +284,6 @@ function makeFigure(color, bonnet, name, tagged) {
   upload(tex);
   return { tex, sprite, shadow, tag, color, bonnet, name, t: 0, lx: 0, a: 0, frozen: false, facing: 1, phase: 0, pulse: 0, near: null, active: true };
 }
-// The attract figure: strolls the path when A has it on; not a window.game player and never at a stop.
-const ghost = Object.assign(makeFigure('#7a93c9', true, 'Ghost passenger', false), { t: 0.62, lx: -1, facing: -1 });
-
 function place(f) {
   const p = at(f.t, 0.015, f.sprite.position);
   const h = figH(f.t), k = f.pulse > 0 ? 1 + 0.18 * Math.abs(Math.sin(Math.PI * f.pulse / 0.6)) : 1; // one pulse per 0.6 s
@@ -225,35 +297,27 @@ function place(f) {
   f.sprite.visible = f.shadow.visible = f.active;
 }
 
-// The verb at a stop: pulse the object, wave the figure, then tell glue (sound, phone readout).
-function pokeAt(pid, f) {
-  const st = stopOf(f.near), o = st && game.poke(st.index);
+// The verb at a stop: tell glue which object to describe (sound, the TV margin, the phone's card). Nothing moves.
+function describeAt(pid, f) {
+  const st = stopOf(f.near), o = st && current && current.objects[st.index];
   if (!o) return;
-  if (!reduced) f.pulse = 0.6;
-  emit({ type: 'poke', pid, object: st.index, label: st.label, kind: o.kind, sound_prompt: o.sound_prompt });
+  emit({ type: 'describe', pid, index: st.index, label: st.label, kind: o.kind, description: typeof o.description === 'string' ? o.description : '' });
 }
 
-// Per-object offsets and glow for the shader, from the motion kind, the clock and any poke pulse; M quarters them.
-function stepMotion() {
-  moveA.fill(0); moveB.fill(0);
-  const objs = current ? current.objects : [], k = reduced ? 0.25 : 1, near = new Set();
-  for (const f of players.values()) if (f.near != null) near.add(f.near);
-  for (let i = 0; i < objs.length && i + 1 < SLOTS; i++) {
-    const s = i + 1, [, y0, , y1] = objs[i].box, m = motionAt(objs[i].motion, simTime, i * 1.7, (y1 - y0) / 1000 * H);
-    pokeLeft[s] = Math.max(0, pokeLeft[s] - STEP);
-    const pop = pokeLeft[s] > 0 ? Math.sin(Math.PI * (1 - pokeLeft[s] / POKE_S)) : 0;
-    moveA.set([m[0] * k, m[1] * k, (m[2] + 0.14 * pop) * k, m[3] * k], s * 4);
-    moveB.set([1 - y1 / 1000, 1000 / (y1 - y0), clamp(m[4] * k + 0.5 * pop + (near.has(i) ? 0.12 : 0), 0, 1)], s * 3);
-  }
+// The shader's only per-object effect: a soft glow on each object a figure stands at.
+function stepGlow() {
+  glow.fill(0);
+  for (const f of players.values()) if (f.near != null && f.near + 1 < SLOTS) glow[f.near + 1] = NEAR_GLOW;
 }
 
 // ---------- margins and captions ----------
 function renderHint() {
   const st = stopOf(players.get(0)?.near);
-  const text = notice || (st ? `${st.label} (AI label) · Space pokes it` : stops.length ? '← → walk · Space pokes what you stand at' : '← → walk the picture');
+  const text = notice || (st ? `${st.label} (AI label) · Space describes it` : stops.length ? '← → walk · Space describes what you stand at' : '← → walk the picture');
   if (hintEl.textContent !== text) hintEl.textContent = text;
 }
 function depthLine() {
+  if (current && depthFromAi) return 'Depth map: estimated from the picture by Depth Anything V2 (AI estimate)';
   if (current) return current.edited ? 'Depth map: from a hand-corrected reading (sample)' : `Depth map: from ${current.model}'s reading (AI draft)`;
   return depth && depth.placeholder ? 'Depth map: hand-authored placeholder, 2026' : 'Depth map: flat until the reading lands';
 }
@@ -281,6 +345,21 @@ function stopAttract() { attract.on = false; attract.lean = 0; renderCaption(); 
 function wake() { attract.idle = 0; if (attract.on) stopAttract(); }
 
 // ---------- window.game ----------
+// The README's window.game table, plus three calls for what arrives after a scene is on stage (src/host/enrich.js and
+// the 3D models): setDepth(depth) re-skins the relief with a depth image ({data: Uint8Array, w, h}, one byte per pixel,
+// rows top first, 255 nearest), its texture, sampler and path heights, leaving the figures, stops and camera where they
+// are (false for a bad image or no scene). setSceneField('depth_url', url) and setObjectModel(index, url) set that field
+// on the scene game.scene() returns, through validateScene (false when the URL does not pass), and emit
+// {type:'enriched', scene}. onHotspot takes any number of listeners. A rising verb (setInput's a, the keyboard's Space
+// or Enter) at a stop emits {type:'describe', pid, index, label, kind, description}, description '' when the object has
+// none; it replaces the old poke, so nothing pops, scales or waves and there is no game.poke. No object ever moves.
+const ENRICH_FIELDS = ['depth_url'];
+function enriched(next, ok) {
+  if (!ok) return false;
+  current = next;
+  emit({ type: 'enriched', scene: current });
+  return true;
+}
 const game = window.game = {
   addPlayer(pid, name, color) {
     pid = Number(pid);
@@ -288,7 +367,8 @@ const game = window.game = {
     name = String(name ?? ''); color = String(color || tok('--cream'));
     const f = players.get(pid);
     if (!f) {
-      const n = Object.assign(makeFigure(color, pid % 2 === 0, name, pid !== 0), { t: startT(pid), pulse: reduced || pid === 0 ? 0 : 1.2 });
+      // pid 0, the TV's own keyboard player, is the Conductor; phones alternate top hat and bonnet.
+      const n = Object.assign(makeFigure(color, pid === 0 ? 'conductor' : pid % 2 === 0, name, pid !== 0), { t: startT(pid), pulse: reduced || pid === 0 ? 0 : 1.2 });
       players.set(pid, n); place(n);
       return;
     }
@@ -316,7 +396,7 @@ const game = window.game = {
     if (lx || a) wake();
     if (f.frozen) return;
     f.lx = lx;
-    if (rising && f.near != null) pokeAt(pid, f);
+    if (rising && f.near != null) describeAt(pid, f);
   },
   onHotspot(cb) { if (typeof cb === 'function') listeners.add(cb); return () => listeners.delete(cb); },
   sendTo() {},
@@ -326,8 +406,7 @@ const game = window.game = {
   showOriginal() { originalEl.hidden = false; clearTimeout(originalTimer); originalTimer = setTimeout(hideOriginal, ORIGINAL_MS); renderTag(); },
   reset() {
     for (const [pid, f] of players) Object.assign(f, { t: startT(pid), lx: 0, a: 0, frozen: false, facing: 1, phase: 0, pulse: 0 });
-    Object.assign(ghost, { t: 0.62, lx: -1, facing: -1, active: true });
-    keys.left = keys.right = keys.verb = false; pokeLeft.fill(0);
+    keys.left = keys.right = keys.verb = false; glow.fill(0);
     setLayer(0); attract.idle = 0; stopAttract(); renderHint();
   },
   // A validated scene on the relief. Rejects, keeping the old scene, when the image fails; a call overtaken by a later
@@ -359,20 +438,40 @@ const game = window.game = {
     statusEl.textContent = t; statusEl.hidden = !t;
   },
   scene: () => current,
-  poke(index) {
-    const i = Number(index), o = current && Number.isInteger(i) && i >= 0 ? current.objects[i] : null;
-    if (!o) return null;
-    if (i + 1 < SLOTS) pokeLeft[i + 1] = POKE_S;
-    return o;
-  },
   stats: () => ({ fps, zoom: Math.round(cam.zoom * 100) / 100, lean: Math.round(cam.lean * 10) / 10, layer }),
+  // [{pid, t, facing}] for every joined figure (pid 0, the keyboard, included): glue.js sends them to inside phones.
+  positions: () => [...players].map(([pid, f]) => ({ pid, t: f.t, facing: f.facing })),
+  setDepth(raw) {
+    const d = current && reliefOf(raw);
+    if (!d) return false;
+    swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
+    depth = d; sample = sampler(d); depthFromAi = true;
+    // the walk keeps its points (and any overlay edit), standing at the new heights as pathPoints would place them
+    path.points = path.points.map(([u, v]) => [u, v, Math.round(clamp(sample(u, v), 0, 1) * 1e4) / 1e4]);
+    setPath(path);
+    renderCaption();
+    return true;
+  },
+  setSceneField(key, value) {
+    if (!current || !ENRICH_FIELDS.includes(key)) return false;
+    const next = validateScene({ ...current, [key]: value });
+    return enriched(next, next[key] === value);
+  },
+  setObjectModel(index, url) {
+    const i = Number(index);
+    if (!current || !Number.isInteger(i) || !current.objects[i]) return false;
+    const next = validateScene({ ...current, objects: current.objects.map((o, k) => (k === i ? { ...o, model_url: url } : o)) });
+    return enriched(next, next.objects[i] && next.objects[i].model_url === url);
+  },
 };
 
 // ---------- follow camera ----------
-const group = () => (ghost.active ? [...players.values(), ghost] : [...players.values()]); // never empty: pid 0 stays
+const group = () => [...players.values()]; // never empty: pid 0 stays
 function aimCamera() {
   if (overlay.visible) { Object.assign(aim, { tx: 0, ty: 0, zoom: 1 }); return; } // hold still on the whole path while dots are dragged
-  Object.assign(aim, followAim(lens, groupBox(group().map((f) => ({ x: f.sprite.position.x, y: f.sprite.position.y, t: f.t, tagged: !!f.tag })))));
+  const looks = [];
+  for (const f of players.values()) { const st = stopOf(f.near); if (st) looks.push([(st.look[0] - 0.5) * W, (st.look[1] - 0.5) * H]); }
+  Object.assign(aim, followAim(lens, groupBox(group().map((f) => ({ x: f.sprite.position.x, y: f.sprite.position.y, t: f.t, tagged: !!f.tag })), looks)));
 }
 function stepCamera(dt) {
   const g = group(), cx = g.reduce((s, f) => s + f.sprite.position.x, 0) / g.length / W + 0.5;
@@ -388,22 +487,17 @@ function step() {
   for (const [pid, f] of players) {
     if (f.lx && !f.frozen) { f.t = clamp(f.t + f.lx * SPEED * STEP, MIN_T, 1); f.facing = f.lx; f.phase += STEP * 8; }
     const st = stopAt(f.t), near = st ? st.index : null;
-    if (near !== f.near) { f.near = near; emit({ type: 'near', pid, object: near, label: st ? st.label : null }); if (pid === 0) renderHint(); }
+    if (near !== f.near) { f.near = near; f.nearAt = simTime; emit({ type: 'near', pid, object: near, label: st ? st.label : null }); if (pid === 0) renderHint(); }
     f.pulse = Math.max(0, f.pulse - STEP);
-  }
-  if (ghost.active) {
-    ghost.t += ghost.lx * SPEED * 0.6 * STEP;
-    if (ghost.t > 0.98) ghost.lx = -1; else if (ghost.t < MIN_T) ghost.lx = 1;
-    ghost.t = clamp(ghost.t, MIN_T, 0.98); ghost.facing = ghost.lx; ghost.phase += STEP * 5;
   }
   attract.idle += STEP;
   if (!attract.on && !judge && attract.idle > 45) { attract.on = true; renderCaption(); }
   else if (attract.on && judge) stopAttract();
   attract.lean = attract.on && !reduced ? Math.sin(simTime / 4) * 5 : 0;
   uniforms.amp.value += ((layer === 'exploded' ? AMP * EXPLODE : AMP) - uniforms.amp.value) * EASE_AMP;
-  stepMotion();
+  stepGlow(); stepLines();
   for (const f of players.values()) place(f);
-  place(ghost);
+  placeMarkers();
   aimCamera(); stepCamera(STEP); arrangeTags();
 }
 
@@ -445,7 +539,7 @@ function frame(now) {
   if (fpsT >= 0.5) { fps = Math.round(frames / fpsT); frames = fpsT = 0; if (layer !== 'painting') renderTag(); }
 }
 
-// ---------- input: scene owns ← → Space Enter Esc O W M ` A (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X) ----------
+// ---------- input: scene owns ← → Space Enter Esc O W M ` (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X, models3d D, apibox K) ----------
 const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const kb = () => game.setInput(0, keys.right - keys.left, keys.verb ? 1 : 0);
 addEventListener('keydown', (e) => {
@@ -463,7 +557,6 @@ addEventListener('keydown', (e) => {
   else if (k === 'w') setLayer(LAYERS.indexOf(layer) + 1);
   else if (k === 'm') setReduced(!reduced);
   else if (k === '`' || e.code === 'Backquote') overlay.toggle();
-  else if (k === 'a') ghost.active = !ghost.active;
   else return;
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'Enter') kb();
   e.preventDefault();
@@ -492,7 +585,7 @@ stage.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && e.
 // ---------- boot: the Turner on its hand-authored relief, no stops, until artwork.js loads sample 1 ----------
 setReduced(reduced);
 build(blank, TURNER, placeholderDepth(), { data: new Uint8Array(1), w: 1, h: 1 }, BOOT_POINTS, []); // before any figure: place() needs the curve
-game.addPlayer(0, 'Keyboard', tok('--slot-keyboard'));
+game.addPlayer(0, 'Conductor', tok('--slot-keyboard'));
 renderHint();
 requestAnimationFrame(frame);
 
@@ -501,8 +594,9 @@ loadImage(BOOT_IMG).then((img) => { if (gen === 0) swapTex('map', imageTexture(i
 loadSheets().then((s) => {
   if (!s) return;
   sheets = s;
-  for (const f of [...players.values(), ghost]) { paintSheet(f.tex.image, s, f.color, f.bonnet); f.tex.needsUpdate = true; upload(f.tex); }
+  for (const f of players.values()) { paintSheet(f.tex.image, s, f.color, f.bonnet); f.tex.needsUpdate = true; upload(f.tex); }
 });
 document.fonts?.load('600 56px "Libre Franklin"').then(() => {
   for (const sp of [...players.values()].map((f) => f.tag).filter(Boolean)) { drawLabel(sp); upload(sp.material.map); }
+  for (const sp of markers) { drawMarker(sp); upload(sp.material.map); }
 }, () => {});

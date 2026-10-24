@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { clean, createBroker, createRelay } from '../hub/relay.js';
 import {
-  WS_PATH, MAX_SOCKETS, MSGS_PER_SEC, PLAYER_MAX_PAYLOAD,
-  CLOSE_EVICTED, CLOSE_REPLACED, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN,
+  WS_PATH, MAX_SOCKETS, MAX_ROOMS, MSGS_PER_SEC, HOST_MSGS_PER_SEC, PLAYER_MAX_PAYLOAD,
+  CLOSE_EVICTED, CLOSE_REPLACED, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN, CLOSE_NO_ROOM,
 } from '../src/shared/protocol.js';
 
 const ROOT = new URL('..', import.meta.url);
@@ -46,10 +47,15 @@ function client(url) {
   ws.count = (t) => ws.log.filter((m) => m.t === t).length;
   return ws;
 }
-const hostOf = (base, token = 'test') => client(`${base}?role=host&host=${token}`);
-// A phone socket on `base`; the host's open {cid} names it. Phones connect one at a time so cids match.
-async function phone(h, base) {
-  const p = client(base);
+// Two TVs' keys and the rooms the relay names after them (computed here on their own, not with hub/relay.js).
+const KEY = 'a'.repeat(22), KEY2 = 'b'.repeat(22);
+const roomOf = (key) => createHash('sha256').update('tt-room:' + key).digest('base64url').slice(0, 16);
+const ROOM = roomOf(KEY), ROOM2 = roomOf(KEY2);
+const hostOf = (base, key = KEY) => client(`${base}?role=host&key=${key}`);
+const inRoom = (base, room = ROOM) => `${base}?room=${room}`;
+// A phone socket in `room` on `base`; the host's open {cid} names it. Phones connect one at a time so cids match.
+async function phone(h, base, room = ROOM) {
+  const p = client(inRoom(base, room));
   const { cid } = await h.next('open');
   await p.opened;
   return { p, cid };
@@ -113,29 +119,43 @@ describe('relay: pure parts', () => {
       { t: 'gone', cid: 'x' }, { t: 'hub' }, { t: 'kick', pid: 1 }, { t: 'cap', max: 6 }]) assert.equal(clean(m), null, JSON.stringify(m));
   });
 
-  test('createBroker: every bus hears every publish, its own included, later, in order and by value', async () => {
+  test('createBroker: a bus hears the channels it subscribes to, its own publishes included, later, in order and by value', async () => {
     const broker = createBroker(), x = broker.bus(), y = broker.bus();
     const got = { x: [], y: [] };
-    x.subscribe((ch, m) => got.x.push([ch, m.n]));
-    y.subscribe((ch, m) => got.y.push([ch, m.n]));
+    x.listen((ch, m) => got.x.push([ch, m.n]));
+    y.listen((ch, m) => got.y.push([ch, m.n]));
+    x.subscribe('a', 'b'); y.subscribe('b');
     const first = { n: 1 };
-    x.publish('a', first); y.publish('b', { n: 2 }); x.publish('a', { n: 3 });
+    x.publish('a', first); y.publish('b', { n: 2 }); x.publish('a', { n: 3 }); x.publish('c', { n: 4 });
     first.n = 99;
     assert.deepEqual(got, { x: [], y: [] }); // never synchronously
     await x.ready();
     await new Promise((r) => setImmediate(r));
-    const want = [['a', 1], ['b', 2], ['a', 3]];
-    assert.deepEqual(got, { x: want, y: want });
+    assert.deepEqual(got, { x: [['a', 1], ['b', 2], ['a', 3]], y: [['b', 2]] });
+    x.unsubscribe('b');
+    y.publish('b', { n: 5 });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(got.x, [['a', 1], ['b', 2], ['a', 3]]);
+    assert.deepEqual(got.y, [['b', 2], ['b', 5]]);
   });
 
-  test('connection closes a socket whose request target cannot be parsed, instead of throwing', () => {
-    const relay = createRelay({ bus: createBroker().bus() });
+  test('connection closes a socket whose request target cannot be parsed, or without a room or a host key, instead of throwing', () => {
+    const bus = createBroker().bus(), subs = [];
+    const relay = createRelay({ bus: { ...bus, subscribe(...chs) { subs.push(chs); bus.subscribe(...chs); } } });
     const closed = [];
-    const ws = { on() {}, close: (code) => closed.push(code) };
+    const ws = { on() {}, close: (code, reason) => closed.push([code, reason]) };
     try {
       for (const url of ['//[', 'http://[::1', 'http://x:99999/']) assert.doesNotThrow(() => relay.connection(ws, { url }), url);
-      assert.deepEqual(closed, [1008, 1008, 1008]);
-      assert.deepEqual(relay.stats(), { instance: relay.instance, host: false, sockets: 0 });
+      assert.deepEqual(closed.map((c) => c[0]), [1008, 1008, 1008]);
+      closed.length = 0;
+      const noRoom = ['/api/ws', '/api/ws?room=', '/api/ws?room=' + ROOM.slice(1), '/api/ws?room=' + ROOM + 'x',
+        `/api/ws?room=${ROOM.slice(1)}%2B`, '/api/ws?role=player&key=' + KEY];
+      const noKey = ['/api/ws?role=host', '/api/ws?role=host&key=', '/api/ws?role=host&room=' + ROOM, '/api/ws?role=host&key=' + 'a'.repeat(21),
+        '/api/ws?role=host&key=' + 'a'.repeat(65), `/api/ws?role=host&key=${'a'.repeat(21)}.`, `/api/ws?role=host&key=${'a'.repeat(21)}%2B&room=${ROOM}`];
+      for (const url of [...noRoom, ...noKey]) relay.connection(ws, { url });
+      assert.deepEqual(closed, [...noRoom.map(() => [CLOSE_NO_ROOM, 'room']), ...noKey.map(() => [CLOSE_BAD_HOST_TOKEN, 'host key'])]);
+      assert.deepEqual(subs, []); // a refused socket never subscribes to anything
+      assert.deepEqual(relay.stats(), { instance: relay.instance, host: 0, sockets: 0 });
     } finally { relay.stop(); }
   });
 });
@@ -172,9 +192,10 @@ describe('relay: hub.js', () => {
   beforeEach(startHub);
   afterEach(stopHub);
 
-  it('greets the host with hub {joinUrl, lanIp, region, wifi}', async () => {
+  it('greets the host with hub {joinUrl, lanIp, region, wifi, room}', async () => {
     const h = hostOf(wsUrl());
     const m = await h.next('hub');
+    assert.equal(m.room, ROOM);
     assert.equal(m.joinUrl, `http://10.1.2.3:${port}/`);
     assert.equal(m.lanIp, '10.1.2.3');
     assert.equal(m.region, 'local');
@@ -185,7 +206,7 @@ describe('relay: hub.js', () => {
   it('tells the host open {cid} when a phone connects and gone {cid} when it closes', async () => {
     const h = hostOf(wsUrl());
     await h.next('hub');
-    const p = client(wsUrl());
+    const p = client(inRoom(wsUrl()));
     const open = await h.next('open');
     assert.deepEqual(Object.keys(open).sort(), ['cid', 't']);
     assert.equal(typeof open.cid, 'string');
@@ -318,19 +339,32 @@ describe('relay: hub.js', () => {
     assert.ok(n >= MSGS_PER_SEC && n <= 2 * MSGS_PER_SEC, `${n} of ${3 * MSGS_PER_SEC} passed`); // a refill may land mid-burst
   });
 
-  it('refuses a phone socket past 12 with 1013', async () => {
+  it('refuses a phone socket past 12 in one room with 1013, and another room still has room', async () => {
     const h = hostOf(wsUrl());
     await h.next('hub');
     for (let i = 0; i < MAX_SOCKETS; i++) await phone(h, wsUrl());
-    const extra = client(wsUrl());
+    const extra = client(inRoom(wsUrl()));
     assert.equal(await extra.closed, 1013);
     assert.equal(extra.reason, 'busy');
     assert.equal(h.count('open'), MAX_SOCKETS);
+    const h2 = hostOf(wsUrl(), KEY2);
+    await h2.next('hub');
+    const other = await phone(h2, wsUrl(), ROOM2);
+    assert.equal(other.p.readyState, WebSocket.OPEN);
   });
 
-  it('rejects a bad or missing host token with 4003', async () => {
-    assert.equal(await hostOf(wsUrl(), 'wrong').closed, CLOSE_BAD_HOST_TOKEN);
-    assert.equal(await client(`${wsUrl()}?role=host`).closed, CLOSE_BAD_HOST_TOKEN);
+  it('rejects a bad or missing host key with 4003 and a phone without a room with 4004; HOST_TOKEN gates nothing', async () => {
+    const bad = hostOf(wsUrl(), 'short');
+    assert.equal(await bad.closed, CLOSE_BAD_HOST_TOKEN);
+    assert.equal(bad.reason, 'host key');
+    assert.equal(await client(`${wsUrl()}?role=host&host=test`).closed, CLOSE_BAD_HOST_TOKEN);
+    const lost = client(wsUrl());
+    assert.equal(await lost.closed, CLOSE_NO_ROOM);
+    assert.equal(lost.reason, 'room');
+    assert.equal(await client(`${wsUrl()}?room=nope`).closed, CLOSE_NO_ROOM);
+    // The hub runs with a HOST_TOKEN of 'test', and a key with no token (or a wrong one) still hosts.
+    const h = client(`${wsUrl()}?role=host&key=${KEY}&host=wrong`);
+    assert.equal((await h.next('hub')).room, ROOM);
   });
 
   it('closes the first host with 4000 when a second connects, and routes to the second', async () => {
@@ -356,7 +390,7 @@ describe('relay: hub.js', () => {
     assert.equal(h.count('open'), 1);
   });
 
-  it('serves /healthz with CORS and guards /host', async () => {
+  it('serves /healthz with CORS and /host without a token', async () => {
     const h = hostOf(wsUrl());
     await h.next('hub');
     await phone(h, wsUrl());
@@ -365,14 +399,19 @@ describe('relay: hub.js', () => {
     assert.equal(r.headers.get('access-control-allow-origin'), ORIGIN);
     const j = await r.json();
     assert.equal(j.ok, true);
-    assert.equal(j.host, true);
+    assert.equal(j.host, 1);
     assert.equal(j.sockets, 1);
     assert.equal(j.region, 'local');
     assert.equal(j.joinUrl, `http://10.1.2.3:${port}/`);
     assert.equal(typeof j.uptime, 'number');
     assert.equal(typeof j.instance, 'string');
-    for (const q of ['', '?host=', '?host=wrong']) assert.equal(await status('/host' + q), 403, q);
-    assert.notEqual(await status('/host?host=test'), 403);
+    const h2 = hostOf(wsUrl(), KEY2); // a second room: the numbers are totals
+    await h2.next('hub');
+    await phone(h2, wsUrl(), ROOM2);
+    const k = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json();
+    assert.equal(k.host, 2);
+    assert.equal(k.sockets, 2);
+    for (const q of ['', '?host=', '?host=wrong', '?host=test']) assert.notEqual(await status('/host' + q), 403, q);
   });
 
   // hub.js verifyClient parses req.url; one bad target must not end the process for every socket.
@@ -386,7 +425,7 @@ describe('relay: hub.js', () => {
 
 // ---- two relays on one broker: two Vercel instances sharing Redis ----
 async function relayServer(bus) {
-  const relay = createRelay({ bus, hostToken: 'test', info: () => ({ region: 'test' }) });
+  const relay = createRelay({ bus, info: () => ({ region: 'test' }) });
   const server = http.createServer((req, res) => res.writeHead(404).end());
   const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
   wss.on('connection', relay.connection);
@@ -441,8 +480,8 @@ describe('relay: two instances on one bus', () => {
     assert.equal(h.count('gone'), 1);
     for (const p of [a.p, b.p]) { assert.equal(p.count('welcome'), 1); assert.equal(p.count('mode'), 1); }
     assert.equal(a.p.count('evicted'), 0);
-    assert.deepEqual(A.relay.stats(), { instance: A.relay.instance, host: true, sockets: 1 });
-    assert.deepEqual(B.relay.stats(), { instance: B.relay.instance, host: false, sockets: 0 });
+    assert.deepEqual(A.relay.stats(), { instance: A.relay.instance, host: 1, sockets: 1 });
+    assert.deepEqual(B.relay.stats(), { instance: B.relay.instance, host: 0, sockets: 0 });
   });
 
   it('a host connecting on B closes the host on A with 4000, then gets every phone message once', async () => {
@@ -471,12 +510,12 @@ describe('relay: two instances on one bus', () => {
     assert.equal(h2.count('open'), 1);
     assert.equal(h2.count('gone'), 1);
     assert.equal(b.p.count('near'), 0);
-    assert.equal(A.relay.stats().host, false);
-    assert.equal(B.relay.stats().host, true);
+    assert.equal(A.relay.stats().host, 0);
+    assert.equal(B.relay.stats().host, 1);
   });
 
   it('drops phone messages while no host is connected anywhere, and delivers once one connects', async () => {
-    const p = client(B.url);
+    const p = client(inRoom(B.url));
     await p.opened;
     p.json({ t: 'hbr', ts: 1 });
     await settle(50);
@@ -519,7 +558,7 @@ describe('relay: bus economy and host tie-break', () => {
     const { p, cid } = await phone(h, A.url);
     for (let i = 0; i < 5; i++) p.json({ t: 'in', lx: 1, a: 0 });
     for (let i = 0; i < 5; i++) assert.deepEqual(await h.next('in'), { t: 'in', lx: 1, a: 0, cid });
-    assert.deepEqual(sent.filter((ch) => ch === 'tt:host'), []);
+    assert.deepEqual(sent.filter((ch) => ch === `tt:${ROOM}:host`), []);
   });
 
   it('a phone on another instance still reaches the host through the bus', async () => {
@@ -528,15 +567,17 @@ describe('relay: bus economy and host tie-break', () => {
     const { p, cid } = await phone(h, A.url);
     p.json({ t: 'hbr', ts: 3 });
     assert.deepEqual(await h.next('hbr'), { t: 'hbr', ts: 3, cid });
-    assert.ok(sent.includes('tt:host'));
+    assert.ok(sent.includes(`tt:${ROOM}:host`));
   });
 
   it('an older host\'s claim does not close a newer host', async () => {
     const h = hostOf(B.url);
     await h.next('hub');
-    broker.bus().publish('tt:ctl', { t: 'host', hid: 'zzz', at: 1, o: 'elsewhere' }); // a claim from long ago
+    broker.bus().publish(`tt:${ROOM}:ctl`, { t: 'host', hid: 'zzz', at: 1, o: 'elsewhere' }); // a claim from long ago
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(h.readyState, 1);
+    broker.bus().publish(`tt:${ROOM}:ctl`, { t: 'host', hid: 'zzz', at: Date.now() + 1000, o: 'elsewhere' }); // a newer one
+    assert.equal(await h.closed, CLOSE_HOST_REPLACED);
   });
 
   it('the relay hb names its instance', async () => {
@@ -545,5 +586,221 @@ describe('relay: bus economy and host tie-break', () => {
     const { p } = await phone(h, A.url);
     const hb = await p.next('hb');
     assert.equal(hb.i, A.relay.instance);
+  });
+});
+
+// ---- rooms: two TVs on the same two instances ----
+// A bus that logs the relay's subscribe and unsubscribe calls, each as [op, ...channels].
+const logged = (bus, log) => ({
+  ...bus,
+  subscribe(...chs) { log.push(['sub', ...chs]); return bus.subscribe(...chs); },
+  unsubscribe(...chs) { log.push(['unsub', ...chs]); return bus.unsubscribe(...chs); },
+});
+const ops = (log) => log.map(([op, ch]) => `${op} ${ch.split(':')[1]}`);
+const roomChannels = (room) => [`tt:${room}:host`, `tt:${room}:phones`, `tt:${room}:ctl`];
+
+describe('relay: rooms on two instances', () => {
+  let A, B, logA, logB;
+  beforeEach(async () => {
+    const broker = createBroker(); logA = []; logB = [];
+    A = await relayServer(logged(broker.bus(), logA)); B = await relayServer(logged(broker.bus(), logB));
+  });
+  afterEach(async () => { await A.close(); await B.close(); });
+
+  it('keeps rooms apart: a host\'s to, all and close reach only its own room\'s phones, on either instance', async () => {
+    const h1 = hostOf(A.url), h2 = hostOf(B.url, KEY2);
+    assert.equal((await h1.next('hub')).room, ROOM);
+    assert.equal((await h2.next('hub')).room, ROOM2);
+    const a1 = await phone(h1, A.url), b1 = await phone(h1, B.url);
+    const a2 = await phone(h2, A.url, ROOM2), b2 = await phone(h2, B.url, ROOM2);
+    for (const x of [a2, b2]) { // host 1 aims at room 2's phones
+      h1.json({ t: 'to', cid: x.cid, msg: { t: 'mode', mode: 'walk' } });
+      h1.json({ t: 'close', cid: x.cid, code: CLOSE_EVICTED, reason: 'judge', msg: { t: 'evicted', reason: 'judge' } });
+    }
+    h1.json({ t: 'all', msg: { t: 'readout', text: 'room 1' } });
+    h1.json({ t: 'to', cid: b1.cid, msg: { t: 'near', label: 'loco' } });
+    assert.equal((await a1.p.next('readout')).text, 'room 1');
+    assert.equal((await b1.p.next('readout')).text, 'room 1');
+    assert.equal((await b1.p.next('near')).label, 'loco');
+    a1.p.json({ t: 'hbr', ts: 11 }); b1.p.json({ t: 'hbr', ts: 12 });
+    a2.p.json({ t: 'hbr', ts: 21 }); b2.p.json({ t: 'hbr', ts: 22 });
+    assert.deepEqual([await h1.next('hbr'), await h1.next('hbr')].map((m) => m.ts).sort(), [11, 12]);
+    assert.deepEqual([await h2.next('hbr'), await h2.next('hbr')].map((m) => m.ts).sort(), [21, 22]);
+    h2.json({ t: 'all', msg: { t: 'readout', text: 'room 2' } });
+    await a2.p.next('readout');
+    await b2.p.next('readout');
+    a1.p.close();
+    assert.deepEqual(await h1.next('gone'), { t: 'gone', cid: a1.cid });
+    await settle();
+    for (const x of [a2, b2]) {
+      assert.equal(x.p.readyState, WebSocket.OPEN);
+      assert.deepEqual(x.p.log.filter((m) => m.t !== 'hb'), [{ t: 'readout', text: 'room 2' }]);
+    }
+    for (const x of [a1, b1]) assert.deepEqual(x.p.log.filter((m) => m.t === 'readout'), [{ t: 'readout', text: 'room 1' }]);
+    assert.deepEqual(h1.log.map((m) => m.t).sort(), ['gone', 'hbr', 'hbr', 'hub', 'open', 'open']);
+    assert.deepEqual(h2.log.map((m) => m.t).sort(), ['hbr', 'hbr', 'hub', 'open', 'open']);
+    assertOnce(h1, h2, a1.p, b1.p, a2.p, b2.p);
+  });
+
+  it('a phone that knows the room cannot host it: no key is 4003, any other key is another room', async () => {
+    const h = hostOf(A.url);
+    await h.next('hub');
+    const { p, cid } = await phone(h, B.url);
+    assert.equal(await client(`${B.url}?role=host&room=${ROOM}`).closed, CLOSE_BAD_HOST_TOKEN);
+    assert.equal(await client(`${B.url}?role=host&key=${ROOM}`).closed, CLOSE_BAD_HOST_TOKEN); // a room is too short to be a key
+    const thief = hostOf(B.url, ROOM + ROOM.slice(0, 6));
+    assert.notEqual((await thief.next('hub')).room, ROOM);
+    thief.json({ t: 'all', msg: { t: 'mode', mode: 'frozen' } });
+    thief.json({ t: 'close', cid, code: CLOSE_EVICTED, reason: 'x' });
+    thief.json({ t: 'to', cid, msg: { t: 'mode', mode: 'frozen' } });
+    h.json({ t: 'to', cid, msg: { t: 'readout', text: 'mine' } });
+    assert.equal((await p.next('readout')).text, 'mine');
+    p.json({ t: 'hbr', ts: 9 });
+    assert.deepEqual(await h.next('hbr'), { t: 'hbr', ts: 9, cid });
+    await settle();
+    assert.equal(h.readyState, WebSocket.OPEN);
+    assert.equal(p.readyState, WebSocket.OPEN);
+    assert.equal(p.count('mode'), 0);
+    assert.deepEqual(thief.log.map((m) => m.t), ['hub']);
+  });
+
+  it('two keys host side by side; the same key in a second tab replaces the first as before', async () => {
+    const h1 = hostOf(A.url), h2 = hostOf(A.url, KEY2);
+    await h1.next('hub'); await h2.next('hub');
+    await settle(20); // a later connect time, so the newest tab is unambiguous
+    const h3 = hostOf(B.url, KEY2); // room 2's second tab, on the other instance
+    await h3.next('hub');
+    assert.equal(await h2.closed, CLOSE_HOST_REPLACED);
+    await settle(20);
+    const h4 = hostOf(A.url, KEY2); // and a third, back on the first instance
+    await h4.next('hub');
+    assert.equal(await h3.closed, CLOSE_HOST_REPLACED);
+    await settle();
+    assert.equal(h1.readyState, WebSocket.OPEN);
+    assert.equal(h4.readyState, WebSocket.OPEN);
+    const { p, cid } = await phone(h1, B.url);
+    const q = await phone(h4, B.url, ROOM2);
+    p.json({ t: 'hbr', ts: 1 });
+    q.p.json({ t: 'hbr', ts: 2 });
+    assert.deepEqual(await h1.next('hbr'), { t: 'hbr', ts: 1, cid });
+    assert.deepEqual(await h4.next('hbr'), { t: 'hbr', ts: 2, cid: q.cid });
+    await settle();
+    assert.equal(h1.count('open') + h1.count('hbr'), 2);
+    assert.equal(h4.count('open') + h4.count('hbr'), 2);
+    assert.deepEqual(A.relay.stats(), { instance: A.relay.instance, host: 2, sockets: 0 });
+    assert.deepEqual(B.relay.stats(), { instance: B.relay.instance, host: 0, sockets: 2 });
+  });
+
+  it('an instance subscribes to a room with its first socket there and unsubscribes with its last', async () => {
+    const h = hostOf(B.url);
+    await h.next('hub');
+    assert.deepEqual(logB, [['sub', ...roomChannels(ROOM)]]);
+    const p1 = await phone(h, A.url), p2 = await phone(h, A.url);
+    const r2 = client(inRoom(A.url, ROOM2));
+    await r2.opened;
+    await settle(50);
+    assert.deepEqual(logA, [['sub', ...roomChannels(ROOM)], ['sub', ...roomChannels(ROOM2)]]);
+    const closeOf = async (ws) => { ws.close(); await ws.closed; await settle(50); };
+    await closeOf(p1.p);
+    assert.deepEqual(ops(logA), [`sub ${ROOM}`, `sub ${ROOM2}`]);
+    await closeOf(p2.p);
+    assert.deepEqual(logA.at(-1), ['unsub', ...roomChannels(ROOM)]);
+    const p3 = await phone(h, A.url); // the room comes back: subscribed afresh
+    await closeOf(r2);
+    await closeOf(p3.p);
+    assert.deepEqual(ops(logA), [`sub ${ROOM}`, `sub ${ROOM2}`, `unsub ${ROOM}`, `sub ${ROOM}`, `unsub ${ROOM2}`, `unsub ${ROOM}`]);
+    assert.deepEqual(A.relay.stats(), { instance: A.relay.instance, host: 0, sockets: 0 });
+    for (const url of [A.url, inRoom(A.url, 'short'), `${A.url}?role=host&key=short`]) await client(url).closed; // refused sockets
+    assert.equal(logA.length, 6);
+    assert.deepEqual(ops(logB), [`sub ${ROOM}`]);
+    await closeOf(h);
+    assert.deepEqual(ops(logB), [`sub ${ROOM}`, `unsub ${ROOM}`]);
+  });
+
+  it('closes a malformed room with 4004 and a malformed key with 4003, and accepts a 64-character key', async () => {
+    for (const url of [A.url, inRoom(A.url, ''), inRoom(A.url, ROOM.slice(1)), inRoom(A.url, ROOM + 'x'), inRoom(A.url, ROOM.slice(1) + '.')]) {
+      const ws = client(url);
+      assert.equal(await ws.closed, CLOSE_NO_ROOM, url);
+      assert.equal(ws.reason, 'room');
+    }
+    for (const key of ['', 'a'.repeat(21), 'a'.repeat(65), 'a'.repeat(21) + '.', 'a'.repeat(21) + '%2B']) {
+      const ws = client(`${A.url}?role=host&key=${key}`);
+      assert.equal(await ws.closed, CLOSE_BAD_HOST_TOKEN, key);
+      assert.equal(ws.reason, 'host key');
+    }
+    const long = 'Z_-9'.repeat(16);
+    assert.equal((await hostOf(B.url, long).next('hub')).room, roomOf(long));
+  });
+});
+
+// ---- limits: anyone may host, so hosts and rooms are bounded too ----
+describe('relay: host and room limits', () => {
+  let A;
+  beforeEach(async () => { A = await relayServer(createBroker().bus()); });
+  afterEach(async () => { await A.close(); });
+
+  it('passes at most 200 messages a second from one host', async () => {
+    const h = hostOf(A.url);
+    await h.next('hub');
+    const { p, cid } = await phone(h, A.url);
+    for (let i = 0; i < 3 * HOST_MSGS_PER_SEC; i++) h.json({ t: 'to', cid, msg: { t: 'readout', text: String(i) } });
+    await settle(1100); // the bucket refills every second
+    h.json({ t: 'to', cid, msg: { t: 'readout', text: 'last' } });
+    while ((await p.next('readout')).text !== 'last');
+    const n = p.count('readout') - 1;
+    assert.ok(n >= HOST_MSGS_PER_SEC && n <= 2 * HOST_MSGS_PER_SEC, `${n} of ${3 * HOST_MSGS_PER_SEC} passed`); // a refill may land mid-burst
+    // The refill gives a host its own rate back, not a phone's.
+    const before = p.count('readout');
+    for (let i = 0; i < 3 * HOST_MSGS_PER_SEC; i++) h.json({ t: 'to', cid, msg: { t: 'readout', text: 'b' + i } });
+    await settle(1100);
+    h.json({ t: 'to', cid, msg: { t: 'readout', text: 'end' } });
+    while ((await p.next('readout')).text !== 'end');
+    assert.ok(p.count('readout') - before - 1 > MSGS_PER_SEC, `second burst: ${p.count('readout') - before - 1} passed`);
+  });
+
+  it('refuses a new room past 64 on one instance with 1013, while a room it holds still takes sockets', async () => {
+    const roomN = (i) => 'r' + String(i).padStart(15, '0');
+    const held = [];
+    for (let i = 0; i < MAX_ROOMS; i++) { const ws = client(inRoom(A.url, roomN(i))); await ws.opened; held.push(ws); }
+    for (const url of [inRoom(A.url, roomN(MAX_ROOMS)), `${A.url}?role=host&key=${KEY}`]) {
+      const ws = client(url);
+      assert.equal(await ws.closed, 1013, url);
+      assert.equal(ws.reason, 'busy');
+    }
+    const again = client(inRoom(A.url, roomN(0)));
+    await again.opened;
+    await settle(50);
+    assert.equal(again.readyState, WebSocket.OPEN);
+    held[1].close(); await held[1].closed; await settle(50); // a room that empties frees its place
+    const h = hostOf(A.url);
+    assert.equal((await h.next('hub')).room, ROOM);
+  });
+});
+
+// ---- a slow or failing SUBSCRIBE (Redis on Vercel) ----
+describe('relay: room subscription timing', () => {
+  it('a failed subscribe closes the socket with 1013; the next one subscribes again, and what it says first waits', async () => {
+    const broker = createBroker(), base = broker.bus();
+    let fails = 1;
+    const slow = { ...base, subscribe(...chs) {
+      if (fails-- > 0) return Promise.reject(new Error('redis down'));
+      return settle(100).then(() => base.subscribe(...chs));
+    } };
+    const S = await relayServer(slow), H = await relayServer(broker.bus());
+    try {
+      const h = hostOf(H.url);
+      await h.next('hub');
+      const first = client(inRoom(S.url));
+      assert.equal(await first.closed, 1013);
+      assert.equal(first.reason, 'relay not ready');
+      await settle(50);
+      const p = client(inRoom(S.url));
+      p.json({ t: 'hello', token: null, slot: 4 }); // sent on open, while the room is still subscribing
+      const { cid } = await h.next('open');
+      assert.deepEqual(await h.next('hello'), { t: 'hello', token: null, slot: 4, cid });
+      h.json({ t: 'to', cid, msg: { t: 'welcome', pid: 1 } });
+      assert.deepEqual(await p.next('welcome'), { t: 'welcome', pid: 1 });
+      assert.deepEqual(h.log.map((m) => m.t), ['hub', 'open', 'hello']);
+    } finally { await S.close(); await H.close(); }
   });
 });

@@ -1,17 +1,34 @@
-/* The TV page: a fixed 1920 x 1080 frame scaled to fit the window (scene.js sets --fit), letterboxed on the
-   gallery wall. Grid: 236 px label margin | 1447 px stage | 237 px margin. The relief takes each artwork's aspect
-   inside the stage. Cyanotype toy theatre: Prussian ground, cream paper cards, brass only for the primary action and
-   the focused item, hairlines instead of heavy borders. Tokens only (src/shared/tokens.css). */
+/* The TV page: a 1920 x 1080 frame scaled to fit the window (scene.js sets --fit). Grid: 236 px station margin |
+   1447 px stage | 237 px rider margin. A window wider than 16:9 widens both margins to its edges (--bleed-x, the
+   letterbox in frame px), so the panels never sit beside empty bars; a taller one is letterboxed top and bottom in the
+   same night, with no visible edge. The relief takes each artwork's aspect inside the stage. The gallery's night
+   railway: cream enamel signs, brass for the line, the primary action and the focused item, hairlines instead of
+   heavy borders. Tokens only (src/shared/tokens.css). */
 *, *::before, *::after { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--gunmetal); }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--rail-night); }
 #tv [hidden] { display: none !important; }
 
 #tv {
-  position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+  --bleed-x: max(0px, (var(--vis-w, 100vw) / var(--fit, 1) - 1920px) / 2);
+  --bleed-y: max(0px, (var(--vis-h, 100vh) / var(--fit, 1) - 1080px) / 2);
+  position: absolute; left: 50%; top: 50%; width: calc(1920px + 2 * var(--bleed-x)); height: 1080px;
   transform: translate(-50%, -50%) scale(var(--fit, 1));
-  display: grid; grid-template-columns: var(--margin-w) 1447px 1fr;
-  background: var(--prussian); color: var(--cream);
+  display: grid; grid-template-columns: calc(var(--margin-w) + var(--bleed-x)) 1447px 1fr;
+  background: var(--rail-night); color: var(--cream);
   font: 400 var(--fs-body-tv)/1.3 var(--font-ui);
+}
+/* The margins and the stage's panels were drawn in the cyanotype tokens; here they map onto the railway night, so
+   every pill, card and overlay follows. The gallery (artwork.css) keeps its own blueprint ink, the phone keeps
+   tokens.css as written, and scene.js reads :root, so the relief's own colours are untouched. */
+#tv > .margin, #stage { --prussian: var(--rail-dusk); --prussian-deep: var(--rail-night); --frame-ink: var(--cream); }
+/* The fit as CSS, to the part of the window that is on screen (fit.js's --vis-w / --vis-h; the viewport until it
+   runs): scene.js's --fit only follows resize events and the whole viewport, so a window running past the screen or
+   under the taskbar lost the frame's bottom. Browsers without typed calc division keep scene.js's value. */
+@supports (opacity: min(100vw / 1920px, 100vh / 1080px)) {
+  #tv {
+    --fit: min(var(--vis-w, 100vw) / 1920px, var(--vis-h, 100vh) / 1080px) !important;
+    left: calc(var(--vis-w, 100vw) / 2); top: calc(var(--vis-h, 100vh) / 2);
+  }
 }
 
 /* Fades: 200 ms on whatever appears, none under reduced motion (the OS setting or M's #tv.reduced). */
@@ -28,7 +45,13 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--gunmet
 .margin.right { gap: var(--space-2); padding: var(--space-3) 7px var(--space-3) 8px; } /* exactly 222 px for the QR */
 .tombstone p { margin: 0; }
 
-/* Right-margin cards: one shape for the mode tag, HUD, source block and resting note. */
+/* Operator cards (the mode tag, the HUD, apibox.js's API button; K still opens its box) are for whoever runs the TV,
+   not its riders: H shows them (glue.js sets #tv.hud-open). The resting note is for riders and always shows. */
+#tv:not(.hud-open) :is(#modeTag, #hud, .api-open) { display: none; }
+/* Except J's guided tour: the attendant presses J and must see it took, so its tag alone shows without H. */
+#tv:not(.hud-open) #modeTag:has(.judge) { display: flex; }
+#tv:not(.hud-open) #modeTag:has(.judge) > span:not(.judge) { display: none; }
+#tv.hud-open :is(#hud, #source) { flex: 0 1 auto; min-height: 0; overflow: hidden; } /* they give way with the riders, never the ticket */
 #modeTag, #hud, #resting {
   flex: none; padding: 10px 12px; border: 1px solid var(--rule-frame); border-radius: var(--radius-card);
   background: var(--card-frame);

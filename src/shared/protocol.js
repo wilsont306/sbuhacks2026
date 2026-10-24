@@ -2,9 +2,12 @@
 // README "Protocol" documents every message; change both together or not at all.
 
 export const MAX_PLAYERS = 6;            // six accent colours, six slots
-export const MAX_SOCKETS = 12;           // slots + reconnect grace + strays
+export const MAX_SOCKETS = 12;           // phone sockets per room on one relay instance: slots + reconnect grace + strays
 export const PLAYER_MAX_PAYLOAD = 1024;  // bytes; the host socket is exempt
 export const MSGS_PER_SEC = 20;          // per player socket
+// Anyone may host now, so the host socket is bounded too: about 30 pos a second for six phones, plus bursts.
+export const HOST_MSGS_PER_SEC = 200;    // per host socket; each one may be a Redis PUBLISH on Vercel
+export const MAX_ROOMS = 64;             // rooms on one relay instance (each one a SUBSCRIBE); past it a new room gets 1013 'busy'
 export const SLOT_HOLD_MS = 20000;       // a sleeping phone keeps its colour this long
 export const PING_MS = 15000;            // ws ping, below proxy idle closes
 export const HB_MS = 2000;               // relay -> player {t:'hb', i} and host -> all {t:'hb', ts}
@@ -30,7 +33,13 @@ export const CLOSE_EVICTED = 4001;       // phone clears its token and stops aut
 // Same token from a newer socket (a second tab): the old one stops and keeps its token. Not 1000, which proxies and
 // Vercel's max-duration close can send for an ordinary drop that must reconnect.
 export const CLOSE_REPLACED = 4002;
-export const CLOSE_BAD_HOST_TOKEN = 4003;
+export const CLOSE_BAD_HOST_TOKEN = 4003; // a host socket without a well-formed ?key= (reason 'host key')
+export const CLOSE_NO_ROOM = 4004;        // a phone socket without a well-formed ?room= (reason 'room')
+
+// Rooms: a TV hosts with its own random key (16 bytes, base64url, 22 characters), and the relay names the room after
+// a hash of it; phones join with ?room=. Knowing a room lets a phone join it, never host it.
+export const HOST_KEY_RE = /^[A-Za-z0-9_-]{22,64}$/;
+export const ROOM_RE = /^[A-Za-z0-9_-]{16}$/;
 
 // Vercel closes every WebSocket at the function's max duration (300 s on Hobby), so host and phones open a second
 // socket and switch to it before then (make-before-break). ?roll=<ms> on either page shortens it for testing.

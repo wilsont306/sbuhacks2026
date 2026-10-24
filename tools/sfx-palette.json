@@ -4,7 +4,7 @@
   { "file": "appear", "prompt": "Stiff paper unfolding and a cardboard cutout popping upright on a toy theatre stage, soft rustle, quiet", "seconds": 2, "loop": false },
   { "file": "save", "prompt": "An old rubber ink stamp pressed onto paper on a wooden desk, one soft thump, quiet", "seconds": 2, "loop": false },
   { "file": "reset", "prompt": "A paper curtain sweeping closed on a small toy theatre, soft whoosh of air and cloth, quiet", "seconds": 2, "loop": false },
-  { "file": "gallery", "prompt": "A heavy old portfolio album opening, thick pages turning with a soft paper flutter, quiet", "seconds": 2, "loop": false },
+  { "file": "gallery", "prompt": "A steam train easing into a quiet country station, a soft hiss of steam and a gentle brake squeal, quiet", "seconds": 2, "loop": false },
   { "file": "wind", "prompt": "Gentle steady breeze over open countryside, soft and airy, no gusts, quiet ambience", "seconds": 4, "loop": true },
   { "file": "water", "prompt": "Calm river water lapping softly against a grassy bank, gentle steady flow, quiet ambience", "seconds": 4, "loop": true },
   { "file": "fire", "prompt": "A small hearth fire crackling softly with gentle pops, warm and quiet ambience", "seconds": 4, "loop": true },
@@ -13,5 +13,9 @@
   { "file": "vehicle", "prompt": "A distant nineteenth-century steam locomotive giving one short whistle and a soft chuff, quiet", "seconds": 2, "loop": false },
   { "file": "footsteps", "prompt": "A few unhurried footsteps of leather shoes on a gravel path, quiet", "seconds": 2, "loop": false },
   { "file": "bell", "prompt": "A distant church bell striking once across a quiet old town, soft reverberant decay", "seconds": 2, "loop": false },
-  { "file": "twinkle", "prompt": "A delicate high music-box shimmer like starlight, soft glassy sparkle, quiet", "seconds": 2, "loop": false }
+  { "file": "twinkle", "prompt": "A delicate high music-box shimmer like starlight, soft glassy sparkle, quiet", "seconds": 2, "loop": false },
+  { "file": "step", "prompt": "Train wheels rolling over a single rail joint, one soft double clack-clack, close and quiet", "seconds": 2, "loop": false },
+  { "file": "door", "prompt": "A wooden railway carriage door unlatching and swinging open, a soft click and a short creak, quiet", "seconds": 2, "loop": false },
+  { "file": "punch", "prompt": "A conductor's ticket punch clipping a stiff card ticket, one crisp small metal click, quiet", "seconds": 2, "loop": false },
+  { "file": "whistle", "prompt": "A steam locomotive whistle, one short clear toot, then a soft chuff as it pulls away, quiet", "seconds": 2, "loop": false }
 ]

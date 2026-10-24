@@ -4,9 +4,63 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(new URL('../src/host/glue.js', import.meta.url), 'utf8');
-const block = src.slice(src.indexOf('/* pure:start'), src.indexOf('/* pure:end */'));
-const g = await import('data:text/javascript,' + encodeURIComponent(block));
+const pure = (path) => {
+  const src = readFileSync(new URL(path, import.meta.url), 'utf8');
+  return import('data:text/javascript,' + encodeURIComponent(src.slice(src.indexOf('/* pure:start'), src.indexOf('/* pure:end */'))));
+};
+const g = await pure('../src/host/glue.js');
+const phone = await pure('../src/join/main.js'); // the phone page's pure block
+
+test('room key: a well-formed stored key stays, else 16 random bytes as 22 base64url characters', () => {
+  const k22 = 'Ab-_0123456789xyzXYZab', k64 = 'a'.repeat(64), zeros = new Uint8Array(16), ones = new Uint8Array(16).fill(255);
+  assert.equal(g.pickKey(k22, ones), k22);
+  assert.equal(g.pickKey(k64, ones), k64);
+  assert.equal(g.pickKey(null, zeros), 'A'.repeat(22));
+  assert.equal(g.pickKey(null, ones), '_'.repeat(21) + 'w'); // '+' and '/' never appear, nor '=' padding
+  for (const bad of [undefined, '', 'a'.repeat(21), 'a'.repeat(65), 'Ab+/0123456789xyzXYZab', 'Ab=_0123456789xyzXYZab', 42]) {
+    assert.equal(g.pickKey(bad, zeros), 'A'.repeat(22), String(bad));
+  }
+  const fresh = g.pickKey(null, Uint8Array.from({ length: 16 }, (_, i) => i * 17));
+  assert.equal(fresh.length, 22);
+  assert.match(fresh, g.KEY_RE);
+});
+
+test('join URL: the relay joinUrl with ?room=, else nothing for the QR', () => {
+  const R = 'abcDEF0123456_-z';
+  assert.equal(g.joinWithRoom('https://x.vercel.app/', R), 'https://x.vercel.app/?room=' + R);
+  assert.equal(g.joinWithRoom('https://x.vercel.app', R), 'https://x.vercel.app/?room=' + R);
+  assert.equal(g.joinWithRoom('http://192.168.1.5:8080/', R), 'http://192.168.1.5:8080/?room=' + R); // the laptop hub (Q)
+  assert.equal(g.joinWithRoom('https://x.app/?hub=y.app#a', R), 'https://x.app/?hub=y.app&room=' + R + '#a');
+  assert.equal(g.joinWithRoom('https://x.app/?room=old', R), 'https://x.app/?room=' + R);
+  for (const bad of [undefined, null, '', 'abc', R.slice(1), R + 'a', 'abcDEF0123456/+z']) assert.equal(g.joinWithRoom('https://x.app/', bad), '', String(bad));
+  for (const bad of [undefined, null, '', 'not a url', '/relative']) assert.equal(g.joinWithRoom(bad, R), '', String(bad));
+});
+
+test('seat store: tagged with the room key, so seats saved under another key (or untagged) are not restored', () => {
+  const mem = () => { let v = null; return { get: () => v, set: (x) => { v = x; } }; };
+  const ls = mem(), a = g.roomStore(ls, 'keyA'), b = g.roomStore(ls, 'keyB');
+  assert.equal(a.get(), null);
+  a.set('{"v":1}');
+  assert.equal(a.get(), '{"v":1}');
+  assert.equal(b.get(), null);
+  ls.set('{"v":1}'); // saved before rooms
+  assert.equal(a.get(), null);
+  assert.equal(g.roomStore(null, 'keyA'), null); // no storage: no restore, as before
+});
+
+test('phone seat: the URL room, else the saved one; a token only for its own room', () => {
+  const A = 'roomAAAAAAAAAAAA', B = 'roomBBBBBBBBBBBB';
+  assert.deepEqual(phone.pickSeat(A, { room: A, token: 't1' }), { room: A, token: 't1' });
+  assert.deepEqual(phone.pickSeat(A, { room: B, token: 't1' }), { room: A, token: null }); // another room clears it
+  assert.deepEqual(phone.pickSeat(A, null), { room: A, token: null });
+  assert.deepEqual(phone.pickSeat(null, { room: B, token: 't1' }), { room: null, token: null }); // no QR: scan again
+  assert.deepEqual(phone.pickSeat('bad', { room: B, token: null }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(null, null), { room: null, token: null }); // the "Scan the code" screen
+  assert.deepEqual(phone.pickSeat(null, 't1'), { room: null, token: null }); // a v1 token without a room
+  assert.deepEqual(phone.pickSeat(null, { token: 't1' }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(A + 'x', { room: 'short', token: 't1' }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(A, { room: A, token: '' }), { room: A, token: null });
+});
 
 test('idle kicks: 90 s for everyone, 30 s for pre-J phones in judge mode, guests and kicked phones exempt', () => {
   const L = { idle: 90000, judgeIdle: 30000 }, now = 100000;
@@ -61,4 +115,96 @@ test('QR scale: integer px per module, at most 222 px with the quiet zone', () =
   assert.equal(g.qrScale(33), 5); // version 4: 205 px
   assert.equal(g.qrScale(45), 4); // version 7: 212 px
   for (const n of [21, 25, 29, 33, 37, 41, 45]) assert.ok((n + 8) * g.qrScale(n) <= 222);
+});
+
+test('world message: the scene inline with an image the phone can load, else nothing to step into', () => {
+  const NO = { t: 'world', scene: null, reason: 'This picture can’t be entered yet' };
+  const s = (image_url, extra = {}) => ({ id: 'a', image_url, objects: [], ...extra });
+  const blob = 'https://x.public.blob.vercel-storage.com/art/a.jpg';
+  assert.deepEqual(g.worldMsg(s(blob)), { t: 'world', scene: s(blob), image: blob });
+  assert.equal(g.worldMsg(s('/assets/turner-1920.jpg')).image, '/assets/turner-1920.jpg');
+  assert.equal(g.worldMsg(s('HTTP://192.168.1.5/samples/sketch.svg')).image, 'HTTP://192.168.1.5/samples/sketch.svg');
+  for (const bad of ['data:image/jpeg;base64,AAAA', 'blob:https://a/b', '', '//evil.example/x.jpg', '/\\evil.example/x.jpg', 'javascript:alert(1)', null]) {
+    assert.deepEqual(g.worldMsg(s(bad)), NO, String(bad));
+  }
+  assert.deepEqual(g.worldMsg(null), NO); // the boot Turner and the flat state
+  const pad = (n) => s('/a.jpg', { pad: 'x'.repeat(n - JSON.stringify(s('/a.jpg', { pad: '' })).length) });
+  assert.equal(JSON.stringify(pad(48000)).length, 48000);
+  assert.equal(g.worldMsg(pad(48000)).image, '/a.jpg');
+  assert.deepEqual(g.worldMsg(pad(48001)), NO);
+});
+
+test('world due: inside 1 always answers, 2 only when the world changed since the last one sent, else nothing', () => {
+  const a = JSON.stringify(g.worldMsg(null)), b = '{"t":"world","scene":{"id":"b"}}';
+  assert.equal(g.worldDue(1, a, a), true);
+  assert.equal(g.worldDue(1, undefined, a), true);
+  assert.equal(g.worldDue(2, a, a), false);
+  assert.equal(g.worldDue(2, a, b), true);
+  assert.equal(g.worldDue(2, undefined, a), true); // never sent, or forgotten on away
+  assert.equal(g.worldDue(2, null, a), true);
+  for (const v of [0, 3, -1, '1']) assert.equal(g.worldDue(v, null, a), false, String(v));
+});
+
+test('pos due: on change, else once the keepalive has passed', () => {
+  assert.equal(g.posDue('a', 'a', 1000, 3999, 3000), false);
+  assert.equal(g.posDue('a', 'a', 1000, 4000, 3000), true);
+  assert.equal(g.posDue('a', 'b', 1000, 1200, 3000), true);
+  assert.equal(g.posDue(null, 'a', -Infinity, 0, 3000), true); // cleared on enter
+  assert.equal(g.posDue(undefined, 'a', undefined, 5, 3000), true); // never sent
+});
+
+test('pos payload: my figure, my near label, every other seated figure with its colour and name', () => {
+  const who = new Map([[0, { name: 'Keyboard', color: '#f3ecdc' }], [1, { name: 'Red Fox', color: '#c33', near: 'train' }], [2, { name: 'Blue Jay', color: '#33c', near: null }]]);
+  const figures = [{ pid: 0, t: 0.15, facing: 1 }, { pid: 1, t: 0.123456, facing: -1 }, { pid: 2, t: 0.5, facing: 1 }, { pid: 9, t: 0.7, facing: 1 }];
+  assert.deepEqual(g.posMsg(1, figures, who), {
+    t: 'pos', me: { t: 0.1235, facing: -1 }, near: 'train',
+    others: [{ pid: 0, t: 0.15, facing: 1, color: '#f3ecdc', name: 'Keyboard' }, { pid: 2, t: 0.5, facing: 1, color: '#33c', name: 'Blue Jay' }],
+  });
+  assert.equal(g.posMsg(2, figures, who).near, null);
+  assert.equal(g.posMsg(3, figures, who), null); // no figure
+  assert.equal(g.posMsg(9, figures, who), null); // a figure but no seat
+});
+
+test('describe: the label, the description cleaned and capped (else the plain line) and the object index', () => {
+  assert.deepEqual(g.describeMsg('river', '  A calm   river,\n painted thin. ', 2), { t: 'describe', label: 'river', text: 'A calm river, painted thin.', index: 2 });
+  for (const none of [undefined, null, '', '   \n', 42]) {
+    assert.deepEqual(g.describeMsg('moon', none, 0), { t: 'describe', label: 'moon', text: 'No description for this one yet.', index: null }, String(none));
+  }
+  assert.equal(g.describeMsg('sky', 'x'.repeat(300)).text.length, 240);
+  assert.equal(g.describeMsg(undefined, 'Two trees.').label, null);
+  for (const bad of [undefined, -0.5, 1.5, '1', NaN]) assert.equal(g.describeMsg('sky', 'Blue.', bad).index, null, String(bad));
+});
+
+test('listen target: an object of this scene with a description, and the text its card shows', () => {
+  const scene = { objects: [{ label: 'river', description: '  A calm   river. ' }, { label: 'moon' }, { label: 'sky', description: 'x'.repeat(300) }, null] };
+  assert.deepEqual(g.listenTarget(0, scene), { index: 0, text: 'A calm river.' });
+  assert.equal(g.listenTarget(2, scene).text, g.describeMsg('sky', 'x'.repeat(300)).text); // the same 240 characters as the card
+  for (const v of [1, 3, 4, -1, 0.5, NaN, '0', null]) assert.equal(g.listenTarget(v, scene), null, String(v));
+  assert.equal(g.listenTarget(0, null), null); // no scene (the boot Turner)
+  assert.equal(g.listenTarget(0, { objects: 'x' }), null);
+});
+
+test('listen due: one /api/speak per phone at a time, and at most one per 3 s', () => {
+  assert.equal(g.listenDue({}, 0, 3000), true); // never asked
+  assert.equal(g.listenDue({ lastListen: -Infinity }, 0, 3000), true);
+  assert.equal(g.listenDue({ speaking: true }, 99999, 3000), false);
+  assert.equal(g.listenDue({ lastListen: 1000 }, 3999, 3000), false);
+  assert.equal(g.listenDue({ lastListen: 1000 }, 4000, 3000), true);
+  assert.equal(g.listenDue({ lastListen: 1000, speaking: false }, 9000, 3000), true);
+});
+
+test('speech result: a usable url, else null with off, capped or error', () => {
+  const blob = 'https://x.public.blob.vercel-storage.com/speech/ab.mp3';
+  assert.deepEqual(g.speechResult(200, { url: blob }), { url: blob });
+  assert.deepEqual(g.speechResult(200, { url: '/speech/ab.mp3' }), { url: '/speech/ab.mp3' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'off' }), { url: null, reason: 'off' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'capped' }), { url: null, reason: 'capped' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'error' }), { url: null, reason: 'error' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'the key is sk_123' }), { url: null, reason: 'error' }); // never echoed
+  assert.deepEqual(g.speechResult(404, null), { url: null, reason: 'off' }); // no API on this hub
+  for (const s of [400, 401, 405, 500]) assert.deepEqual(g.speechResult(s, null), { url: null, reason: 'error' }, String(s));
+  for (const bad of ['http://x/a.mp3', '//evil.example/a.mp3', '/\\evil/a.mp3', 'javascript:alert(1)', 'data:audio/mpeg;base64,AA', '', 42]) {
+    assert.deepEqual(g.speechResult(200, { url: bad }), { url: null, reason: 'error' }, String(bad));
+  }
+  assert.deepEqual(g.speechResult(200, null), { url: null, reason: 'error' });
 });

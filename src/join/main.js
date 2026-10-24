@@ -1,5 +1,5 @@
 // Phone controller (v2). The host owns all game state; this page shows one screen per state
-// (connecting, lobby, walk, full, evicted), sends pad and verb input to the hub, and hands the TV a photographed
+// (connecting, lobby, walk, full, evicted, and noroom without a room), sends pad and verb input to the hub, and hands the TV a photographed
 // artwork: the phone POSTs it to /api/interpret itself and sends only the returned scene URL.
 // No ES2020 syntax (?. ??): iOS 13 Safari must parse this.
 import '../shared/tokens.css';
@@ -9,11 +9,23 @@ import '@fontsource/libre-franklin/latin-600.css';
 import './join.css';
 import NoSleep from 'nosleep.js';
 import {
-  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, CLOSE_EVICTED, CLOSE_REPLACED,
+  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, CLOSE_EVICTED, CLOSE_REPLACED, CLOSE_NO_ROOM,
   ROLLOVER_MS, ROLLOVER_JITTER_MS, ROLL_WAIT_MS, HOST_SEEN_MS,
 } from '../shared/protocol.js';
 import { downscale } from '../shared/downscale.js';
 import slots from '../shared/slots.json';
+
+/* pure:start (tests/glue.test.js imports this block on its own: no imports, no page globals, no ES2020 syntax) */
+// The room this phone plays in and its seat token. The room is only ever the URL's ?room= (the TV's QR; a reload
+// keeps it), never a saved one, which may belong to a TV that has gone. A token belongs to the room it was won in,
+// so another room starts without one. `saved` is the stored {room, token}.
+export function pickSeat(urlRoom, saved) {
+  const ok = (r) => typeof r === 'string' && /^[A-Za-z0-9_-]{16}$/.test(r);
+  if (!ok(urlRoom)) return { room: null, token: null };
+  const s = saved && typeof saved === 'object' && saved.room === urlRoom ? saved : null;
+  return { room: urlRoom, token: s && typeof s.token === 'string' && s.token ? s.token : null };
+}
+/* pure:end */
 
 const $ = (id) => document.getElementById(id);
 const body = document.body, pad = $('pad'), verb = $('verb');
@@ -24,12 +36,17 @@ const BACKOFF = [500, 1000, 2000, 4000, 8000];
 const IN_GAP = 60; // ms between 'in' messages: ~16/s leaves room under the hub's 20/s for hbr and panel
 const DEAD = 0.075; // half of the 15%-wide dead zone at the pad centre, as a fraction of pad width
 
-let tok = null;
-try { tok = localStorage.getItem('tt.token'); } catch (e) {}
+// The room and token live together in tt.seat; v1's bare tt.token (no room) is never read.
+let saved = null;
+try { saved = JSON.parse(localStorage.getItem('tt.seat')); } catch (e) {}
+const seat = pickSeat(QS.get('room'), saved), ROOM = seat.room;
+const WS = ROOM && HUB + (HUB.indexOf('?') < 0 ? '?' : '&') + 'room=' + ROOM; // every socket, rollover included
+let tok = seat.token;
 function setTok(t) {
   tok = t;
-  try { if (t) localStorage.setItem('tt.token', t); else localStorage.removeItem('tt.token'); } catch (e) {}
+  try { localStorage.setItem('tt.seat', JSON.stringify({ room: ROOM, token: t || null })); } catch (e) {}
 }
+if (ROOM) setTok(tok); // a new room drops the old room's token
 
 let state = '', ws = null, joined = false, armed = false, helloSent = false, lastHello = null, stopped = false, named = false, mySlot;
 let retry = 0, retryT, bannerT = 0, hintT, dogT, fullT, toastT, splashT;
@@ -38,9 +55,10 @@ let hostSeen = 0, rollT, rollWaitT; // hostSeen: last message that came from the
 // ---- screens ----
 function show(s) {
   if (s === state) return;
-  if (s !== 'walk') zero();
+  if (s !== 'walk') { leaveInside(false); zero(); describe(null); } // the socket is gone or seatless: nothing to tell the host
   state = s;
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== s;
+  $('origBtn').hidden = s === 'noroom'; // no TV to show it on
   clearInterval(fullT);
   if (s === 'full') fullT = setInterval(() => hello(lastHello), 3000);
 }
@@ -62,12 +80,100 @@ function lobby(free) {
   show('lobby');
 }
 
-// label: the object the figure stands at (from the host's {t:'near'}), or null.
+// label: the object the figure stands at (from the host's {t:'near'}), or null. Walking to another object (or off
+// this one) closes its description.
+let nearNow = null;
 function near(label) {
   const on = typeof label === 'string' && label !== '';
-  verb.textContent = on ? 'Poke the ' + label.slice(0, 40) : 'Walk to something';
+  if ((on ? label : null) !== nearNow) { nearNow = on ? label : null; describe(null); }
+  verb.textContent = on ? 'About the ' + label.slice(0, 40) : 'Walk to something';
   verb.setAttribute('aria-disabled', on ? 'false' : 'true');
 }
+
+// The verb's answer ({t:'describe', label, text, index}): a calm card under the verb, and over the inside view while it
+// is open. d is {head, text, index}, or null to close it; it closes itself 20 s after it opens or its voice ends.
+const DESC_MS = 20000;
+let desc = null, descT;
+function describe(d) {
+  if (!d && !desc) return;
+  desc = d;
+  hush(); // a new card or none: its voice stops
+  $('desc').hidden = !d; $('walk').classList.toggle('described', !!d);
+  if (d) { $('descH').textContent = d.head; $('descP').textContent = d.text; }
+  if (inside) inside.describe(d);
+  paintVoice();
+}
+function armDesc() {
+  clearTimeout(descT);
+  if (desc) descT = setTimeout(() => describe(null), DESC_MS);
+}
+$('descX').onclick = () => describe(null);
+
+// ---- Listen: the card read aloud, only on a tap. The host asks /api/speak and answers {t:'speech', index, url} ----
+// One audio element, so one clip at a time; a silent clip played inside the tap unlocks it for iOS's later play().
+const SILENT = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+const SPEECH_MS = 35000; // the host's own /api/speak wait is 30 s, and it always answers
+const VOICE = { idle: ['Listen', 'Listen to the description'], wait: ['Preparing…', 'Preparing the voice'], play: ['Stop', 'Stop the description'] };
+const voice = new Audio(), voiced = new Map(); // voiced: index|text -> url, so a repeat tap asks nothing
+let voiceSt = 'idle', voiceGen = 0, asked = null, askedT, askT;
+const voiceKey = (d) => d.index + '|' + d.text;
+const okVoiceUrl = (u) => typeof u === 'string' && u.length <= 2048 && /^(https:\/\/|\/(?![/\\]))/i.test(u);
+function setVoice(s) {
+  voiceSt = s;
+  if (s === 'idle') armDesc(); else clearTimeout(descT); // the card never closes on its own mid-voice
+  paintVoice();
+}
+// Both cards' Listen buttons (the walk screen's and the inside view's) show the one voice's state.
+function paintVoice() {
+  const v = VOICE[voiceSt], off = !desc || desc.index === null;
+  for (const b of document.querySelectorAll('.desc-l')) {
+    b.hidden = off; b.setAttribute('data-v', voiceSt); b.setAttribute('aria-label', v[1]);
+    b.querySelector('span').textContent = v[0];
+  }
+}
+function hush() {
+  voiceGen++; clearTimeout(askedT); clearTimeout(askT); asked = null;
+  voice.pause();
+  setVoice('idle');
+}
+function voiceFail() { hush(); toast('The voice isn’t available right now'); }
+function play(url) {
+  const g = ++voiceGen;
+  voice.src = url;
+  setVoice('play');
+  const p = voice.play();
+  if (p && p.then) p.then(null, () => { if (g === voiceGen) voiceFail(); });
+}
+voice.onended = () => { if (voiceSt === 'play') setVoice('idle'); };
+voice.onerror = () => { if (voiceSt === 'play') voiceFail(); };
+function askVoice() { // the send can miss a beat (rate headroom while the pad is held, a socket switch): try again
+  if (asked && !send({ t: 'panel', kind: 'listen', value: asked.index })) askT = setTimeout(askVoice, 250);
+}
+function listen() {
+  if (!desc || desc.index === null || voiceSt === 'wait') return;
+  if (voiceSt === 'play') return hush(); // Stop
+  const url = voiced.get(voiceKey(desc));
+  if (url) return play(url); // inside the tap: no unlock needed
+  voice.src = SILENT;
+  const p = voice.play(), g = voiceGen;
+  if (p && p.then) p.then(() => { if (g === voiceGen && voiceSt === 'wait') voice.pause(); }, () => {});
+  else voice.pause();
+  asked = { index: desc.index, key: voiceKey(desc) };
+  setVoice('wait');
+  askedT = setTimeout(voiceFail, SPEECH_MS);
+  askVoice();
+}
+function speech(m) {
+  if (!asked || m.index !== asked.index) return; // an answer for a card that has closed
+  const url = okVoiceUrl(m.url) ? m.url : null, key = asked.key;
+  clearTimeout(askedT); clearTimeout(askT); asked = null;
+  if (!url) return voiceFail();
+  if (voiced.size >= 32) voiced.clear(); // shortcut: forgets every url past 32 objects, fine for a few scenes a visit
+  voiced.set(key, url);
+  play(url);
+}
+$('descL').onclick = listen;
+addEventListener('pagehide', hush);
 
 function toast(text) {
   const t = $('toast');
@@ -96,6 +202,7 @@ function welcome(m) {
     clearTimeout(splashT); splashT = setTimeout(() => { $('splash').hidden = true; }, 3000);
   }
   show('walk');
+  if (inside) inside.again();
   armRoll();
 }
 
@@ -125,7 +232,7 @@ function onClosed(w, e) {
 function connect() {
   clearTimeout(retryT);
   let w;
-  try { w = new WebSocket(HUB); } catch (e) { return lost(0); }
+  try { w = new WebSocket(WS); } catch (e) { return lost(0); }
   ws = w; armed = helloSent = false;
   dogT = setTimeout(() => lost(0), HB_WATCHDOG_MS); // a connect that hangs (captive Wi-Fi) is retried too
   // slot is ignored for a known token; after a hub restart it keeps this phone's colour
@@ -149,7 +256,7 @@ function roll() {
   const a = ws;
   if (!joined || !tok || !a || a.readyState !== 1) return; // no seat to keep: an ordinary reconnect is fine
   let b;
-  try { b = new WebSocket(HUB); } catch (e) { return scheduleRoll(30000); }
+  try { b = new WebSocket(WS); } catch (e) { return scheduleRoll(30000); }
   a.retiring = true;
   const abandon = () => {
     clearTimeout(rollWaitT);
@@ -190,6 +297,10 @@ function lost(code, reason) {
   $('resting').hidden = true;
   if (code === CLOSE_EVICTED) return evicted(false, reason);
   if (code === CLOSE_REPLACED) return evicted(true); // another tab of this phone took the token; reconnecting would steal it back forever
+  if (code === CLOSE_NO_ROOM) { // the relay refused our room: only a fresh scan helps
+    stopped = true; clearTimeout(hintT); clearTimeout(bannerT); bannerT = 0; $('banner').hidden = true;
+    return show('noroom');
+  }
   if (stopped) return;
   if (state !== 'connecting' && !bannerT) bannerT = setTimeout(() => { $('banner').hidden = false; }, 1000);
   clearTimeout(retryT);
@@ -236,16 +347,31 @@ function onMsg(m) {
   else if (t === 'mode') { show('walk'); if (m.mode === 'reset') near(null); } // 'walk' | 'reset': walk is the only seated screen
   else if (t === 'near') near(m.label);
   else if (t === 'readout') { if (m.text) toast(String(m.text)); }
+  else if (t === 'describe') {
+    if (typeof m.text === 'string' && m.text) {
+      describe({
+        head: typeof m.label === 'string' && m.label ? m.label.slice(0, 40) : 'This part of the picture', text: m.text.slice(0, 240),
+        index: Number.isInteger(m.index) && m.index >= 0 ? m.index : null, // null (an older host): no Listen
+      });
+    }
+  }
+  else if (t === 'speech') speech(m);
+  else if (t === 'world' || t === 'pos') {
+    if (inside) inside.msg(m);
+    // pos for a closed view: the host missed our Back, so say it again (at most every 5 s)
+    else if (t === 'pos' && Date.now() - outSent >= 5000 && send({ t: 'panel', kind: 'inside', value: 0 })) outSent = Date.now();
+  }
 }
 
 // ---- input: hold-to-walk pad and verb button ----
 let lx = 0, a = 0, padId = null, verbId = null, lastIn = 0, inT;
 function setIn(nlx, na) {
   if (nlx === lx && na === a) return;
-  if (na && !a) lastIn = 0; // a Poke is a rising edge on the host: never let IN_GAP coalesce a short tap away
+  if (na && !a) lastIn = 0; // the verb is a rising edge on the host: never let IN_GAP coalesce a short tap away
   lx = nlx; a = na;
   pad.setAttribute('data-lx', lx);
   verb.classList.toggle('down', !!a);
+  if (inside) inside.input(lx, a);
   pushIn();
 }
 function pushIn() {
@@ -311,6 +437,38 @@ $('origBtn').onclick = () => {
 };
 $('again').onclick = start;
 
+// ---- Step inside: the TV's picture as a world seen from this figure (./inside.js, a lazy chunk with three.js) ----
+// The host answers {t:'panel', kind:'inside', value:1} with {t:'world'} and then {t:'pos'} whenever it changes (and
+// every 3 s); value 2 re-asserts after a welcome and gets the world only if it changed; 'look' is idle-kick activity.
+const insideBtn = $('insideBtn'), insideLabel = $('insideLabel'), INSIDE_LABEL = insideLabel.textContent;
+let inside = null, outSent = 0; // outSent: the last inside 0 this phone sent
+insideBtn.onclick = () => {
+  if (inside || insideBtn.disabled) return;
+  insideBtn.disabled = true; insideLabel.textContent = 'Opening…';
+  import('./inside.js')
+    .then((mod) => {
+      if (state !== 'walk' || inside) return;
+      zero();
+      inside = mod.open({
+        setLx: (v) => setIn(v, a), setA: (v) => setIn(lx, v), // the pad's own input: same heartbeat, same release rules
+        ask: () => send({ t: 'panel', kind: 'inside', value: 1 }),
+        reassert: () => send({ t: 'panel', kind: 'inside', value: 2 }),
+        look: () => send({ t: 'panel', kind: 'look', value: 1 }),
+        back: () => leaveInside(true), toast, closeDesc: () => describe(null), listen,
+      });
+      if (desc) { inside.describe(desc); paintVoice(); }
+    })
+    .catch(() => toast('Couldn’t open the inside view; try again'))
+    .then(() => { insideBtn.disabled = false; insideLabel.textContent = INSIDE_LABEL; });
+};
+function leaveInside(tell) {
+  if (!inside) return;
+  const v = inside;
+  inside = null;
+  v.close(); zero();
+  if (tell) { if (send({ t: 'panel', kind: 'inside', value: 0 })) outSent = Date.now(); insideBtn.focus(); }
+}
+
 // ---- Add artwork: photo -> downscale -> /api/interpret -> the scene URL to the host as {t:'panel', kind:'artwork'} ----
 // Only over https: the laptop hub serves no /api/interpret.
 const artBtn = $('artBtn'), artFile = $('artFile'), artLabel = $('artLabel'), ART_LABEL = artLabel.textContent; // the label span keeps the camera glyph
@@ -365,6 +523,7 @@ setInterval(() => {
 }, 1000);
 
 function start() {
+  if (!ROOM) return show('noroom'); // no QR scanned, nothing saved: no socket to open
   stopped = false; retry = 0;
   show('connecting');
   clearTimeout(hintT); hintT = setTimeout(() => { $('hint').hidden = false; }, 4000);

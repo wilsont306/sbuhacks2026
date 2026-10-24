@@ -5,6 +5,7 @@
  "credit": "Vincent van Gogh, 1889. The Museum of Modern Art, New York. Public domain (Wikimedia Commons).",
  "image_url": "/samples/starry-night.jpg",
  "scene_url": "",
+ "depth_url": "/samples/starry-night.depth.png",
  "model": "hand-corrected",
  "generated_at": "2026-10-24T09:00:00.000Z",
  "ai_draft": true,
@@ -61,7 +62,8 @@
    "depth": 0.08,
    "colour": "#1e2420",
    "motion": "sway",
-   "sound_prompt": "Night wind sighing softly through a tall cypress"
+   "sound_prompt": "Night wind sighing softly through a tall cypress",
+   "description": "A cypress rising like a dark flame in the foreground, tall enough to join the ground to the sky. It is built from long, wavy strokes of deep green and brown."
   },
   {
    "label": "Crescent moon",
@@ -96,7 +98,8 @@
    "depth": 0.9,
    "colour": "#d4b02c",
    "motion": "twinkle",
-   "sound_prompt": "A faint high shimmering hum in still night air"
+   "sound_prompt": "A faint high shimmering hum in still night air",
+   "description": "A crescent moon in the top right corner, wrapped in a glowing ring of yellow and orange. Records suggest the real moon was not a crescent when this was painted, so the shape was Van Gogh's choice."
   },
   {
    "label": "Church spire",
@@ -122,7 +125,8 @@
    "depth": 0.38,
    "colour": "#b8c4d0",
    "motion": "none",
-   "sound_prompt": "A distant church bell tolling once, far away"
+   "sound_prompt": "A distant church bell tolling once, far away",
+   "description": "The village church, its thin spire pointing up into the swirling sky. Some have said it looks more Dutch than Provençal, like a church from Van Gogh's homeland."
   },
   {
    "label": "Sleeping village",
@@ -145,7 +149,8 @@
    "depth": 0.4,
    "colour": "#34405a",
    "motion": "none",
-   "sound_prompt": "Sleeping village at night, soft crickets, a faraway dog"
+   "sound_prompt": "Sleeping village at night, soft crickets, a faraway dog",
+   "description": "A quiet village under the night sky, its windows lit in yellow. It is partly invented: Van Gogh added it from sketches and imagination rather than the view from his window."
   },
   {
    "label": "Great white star",
@@ -168,7 +173,8 @@
    "depth": 0.92,
    "colour": "#dcd8a8",
    "motion": "twinkle",
-   "sound_prompt": "Soft glassy chime ringing slowly in a quiet sky"
+   "sound_prompt": "Soft glassy chime ringing slowly in a quiet sky",
+   "description": "The large white star just right of the cypress, usually read as Venus, the morning star, which shone before dawn that spring. It is painted as rings of white and yellow around a bright core."
   },
   {
    "label": "Hills",
@@ -199,7 +205,8 @@
    "depth": 0.7,
    "colour": "#3751a3",
    "motion": "none",
-   "sound_prompt": "Gentle night breeze over olive groves and low hills"
+   "sound_prompt": "Gentle night breeze over olive groves and low hills",
+   "description": "Low, rolling hills along the horizon, usually identified as the Alpilles near Saint-Rémy. A dark outline marks the ridge, and bands of blue strokes echo the waves of the sky."
   },
   {
    "label": "Swirling sky",
@@ -230,7 +237,8 @@
    "depth": 1,
    "colour": "#314a8c",
    "motion": "drift",
-   "sound_prompt": "Slow swirling wind high above, soft and airy"
+   "sound_prompt": "Slow swirling wind high above, soft and airy",
+   "description": "A night sky that churns in waves around a great spiral. Van Gogh painted it in June 1889 at the asylum of Saint-Paul-de-Mausole in Saint-Rémy, from memory and imagination, in thick short strokes."
   },
   {
    "label": "Star by the cypress",
@@ -253,7 +261,8 @@
    "depth": 0.92,
    "colour": "#d8d29a",
    "motion": "twinkle",
-   "sound_prompt": "Tiny distant bell-like twinkle in a hushed sky"
+   "sound_prompt": "Tiny distant bell-like twinkle in a hushed sky",
+   "description": "A smaller star glowing just left of the cypress. Like the other stars, it is a bright yellow centre ringed by halos of short, dabbed strokes."
   }
  ]
 }

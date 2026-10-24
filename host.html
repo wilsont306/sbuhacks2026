@@ -7,12 +7,11 @@
 </head>
 <body>
   <div id="tv">
-    <aside class="margin left" aria-label="Wall label">
+    <aside class="margin left" aria-label="Station sign and the stops on this line">
       <div class="tombstone" id="label"></div>
-      <section id="roster" aria-live="polite"></section>
     </aside>
 
-    <main id="stage" aria-label="The artwork stage. Arrow keys walk the figure, Space pokes the object it stands at.">
+    <main id="stage" aria-label="The artwork stage. Arrow keys walk the figure, Space describes the object it stands at.">
       <canvas id="gl" width="1447" height="1080"></canvas>
       <p id="status" hidden aria-live="polite"></p>
       <p id="hint" aria-live="polite"></p>
@@ -23,9 +22,10 @@
       </div>
     </main>
 
-    <aside class="margin right">
+    <aside class="margin right" aria-label="Riders and the join ticket">
       <div id="modeTag"></div>
       <div id="hud"></div>
+      <section id="roster" aria-live="polite"></section>
       <div id="resting" hidden></div>
       <div id="qr"></div>
     </aside>

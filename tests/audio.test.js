@@ -11,7 +11,7 @@ const obj = (label, kind = 'object', o = {}) => ({ label, kind, motion: 'none', 
 
 test('every kind, motion and event names a palette file', () => {
   for (const k of KINDS) for (const m of MOTIONS) assert.ok(palette.has(kindFile(k, m)), `${k}/${m}`);
-  for (const e of EVENTS) assert.ok(palette.has(e), e);
+  for (const e of EVENTS) assert.ok(palette.has(chooseSound(e).file.replace(/\.mp3$/, '')), e);
 });
 
 test('kind map follows the contract; flying animals chirp, flying vehicles do not', () => {
@@ -40,6 +40,16 @@ test('chooseSound: events by name, pokes by kind until a generated url is known'
   assert.equal(g.src, 'https://blob.example/sfx/abc.mp3'); assert.equal(g.generated, true); assert.match(g.file, /river/);
   // the poke event carries no motion; the prepared scene supplies it
   assert.equal(chooseSound('poke', { label: 'Swallow', kind: 'animal' }, new Map(), new Map([['swallow', 'fly']])).src, '/sfx/bird.mp3');
+});
+
+test('describe plays the object\'s generated sound once ready, else its kind file, else the poke tick', () => {
+  const tick = { src: '/sfx/poke.mp3', file: 'poke.mp3', generated: false };
+  assert.deepEqual(chooseSound('describe'), tick); // no object
+  assert.deepEqual(chooseSound('describe', obj('River', 'water'), new Map()), { src: '/sfx/water.mp3', file: 'water.mp3', generated: false });
+  assert.deepEqual(chooseSound('describe', { label: 'Thing', kind: 'dragon' }, new Map()), tick); // unknown kind
+  assert.equal(chooseSound('describe', { label: 'Swallow', kind: 'animal' }, new Map(), new Map([['swallow', 'fly']])).src, '/sfx/bird.mp3');
+  assert.deepEqual(chooseSound('describe', obj('River', 'water'), new Map([['river', 'https://blob.example/sfx/abc.mp3']])),
+    { src: 'https://blob.example/sfx/abc.mp3', file: 'river (made for this artwork)', generated: true });
 });
 
 test('todayCount counts only today and ignores junk', () => {
@@ -104,6 +114,11 @@ test('prepare asks for two objects serially with the host token, then pokes play
   assert.equal(flashes.length, 2);
   assert.ok(flashes.every((t) => t.startsWith('poke · ') && t.endsWith(' · ElevenLabs')));
   assert.match(flashes[1], /bell\.mp3/);
+  assert.equal(await audio.play('describe', { label: 'Train', kind: 'vehicle' }), true); // its generated sound is ready
+  assert.equal(plays[2].src, 'https://blob.example/sfx/train.mp3');
+  assert.equal(await audio.play('describe', { label: 'Bridge', kind: 'building' }), true); // none made: its kind file
+  assert.equal(plays[3].src, '/sfx/bell.mp3');
+  assert.equal(flashes[3], 'describe · bell.mp3 · ElevenLabs');
 
   await audio.prepare(scene); // same scene again: both labels known, nothing spent
   assert.equal(calls.length, 2);

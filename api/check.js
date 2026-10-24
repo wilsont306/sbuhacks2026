@@ -1,15 +1,17 @@
-// Vercel Function: POST /api/check {service: 'gemini'|'elevenlabs'|'snowflake'|'storage'} -> 200 {ok, using, detail,
-// credits?}, the TV's "test this key" button. gemini and elevenlabs test the visitor's own key from x-gemini-key /
-// x-elevenlabs-key (using:'yours'), else the team's env key (using:'team'), else answer using:'none'; neither costs
-// generation quota (Gemini lists models, ElevenLabs reads the subscription, or its models list for a key not allowed to
-// read it, and then credits is null). snowflake and storage are the team's only. Each upstream call is cut at 8 s,
-// each client gets 10 checks a minute (429), anything but POST is 405, an unknown service 400. detail is short, fixed
-// text safe to show on the TV: no key and no upstream body ever comes back or reaches the log.
+// Vercel Function: POST /api/check {service: 'gemini'|'elevenlabs'|'tripo'|'snowflake'|'storage'} -> 200 {ok, using,
+// detail, credits?}, the TV's "test this key" button. gemini, elevenlabs and tripo test the visitor's own key from
+// x-gemini-key / x-elevenlabs-key / x-tripo-key (using:'yours'), else the team's env key (using:'team'), else answer
+// using:'none'; none costs generation quota (Gemini lists models, ElevenLabs reads the subscription, or its models list
+// for a key not allowed to read it, and then credits is null; Tripo reads the balance). snowflake and storage are the
+// team's only. Each upstream call is cut at 8 s, each client gets 10 checks a minute (429), anything but POST is 405, an
+// unknown service 400. detail is short, fixed text safe to show on the TV: no key and no upstream body ever comes back
+// or reaches the log.
 import { readBody, clientIp, userKey } from './interpret.js';
 import { tokenMatches } from './sfx.js';
+import { TRIPO_BASE, tripoKey } from '../lib/tripo.js';
 
 export const TIMEOUT_MS = 8000, MAX_PER_MINUTE = 10, MINUTE_MS = 60 * 1000;
-export const SERVICES = ['gemini', 'elevenlabs', 'snowflake', 'storage'];
+export const SERVICES = ['gemini', 'elevenlabs', 'tripo', 'snowflake', 'storage'];
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1';
 const ELEVEN_URL = 'https://api.elevenlabs.io/v1';
 const TIMED_OUT = { status: 0, why: 'timeout' };
@@ -30,6 +32,7 @@ export function createHandler(deps = {}) {
     timeoutMs = TIMEOUT_MS,
     // Imported on use, like api/interpret.js, so a broken Snowflake module only fails its own check.
     snowflake = () => import('../lib/snowflake.js'),
+    blob = () => import('@vercel/blob'),
   } = deps;
   const recent = new Map(); // client -> times of its checks in the last minute
 
@@ -63,9 +66,15 @@ export function createHandler(deps = {}) {
     return within(work, ac, ms);
   }
 
+  // The provider's machine-readable reason (ElevenLabs: {detail: {status: 'missing_permissions'}}), a fixed token, never
+  // its message text.
+  const reason = (r) => {
+    const s = r.json && r.json.detail && r.json.detail.status;
+    return typeof s === 'string' && /^[a-z_]{3,40}$/.test(s) ? s : '';
+  };
   function trouble(name, r) {
     if (!r.status) return r.why === 'timeout' ? `${name} did not answer in ${Math.ceil(timeoutMs / 1000)} s` : `Could not reach ${name}`;
-    if ([400, 401, 403].includes(r.status)) return `${name} refused the key`;
+    if ([400, 401, 403].includes(r.status)) return `${name} refused the key` + (reason(r) ? ` (${r.status} ${reason(r)})` : '');
     if (r.status === 429) return `${name} says the key is over its limit`;
     return `${name} answered HTTP ${r.status}`;
   }
@@ -91,7 +100,16 @@ export function createHandler(deps = {}) {
     const m = await get(`${ELEVEN_URL}/models`, h, left);
     return m.status === 200
       ? { ok: true, credits: null, detail: 'ElevenLabs accepted the key (it may not read its credits)' }
-      : { ok: false, credits: null, detail: trouble('ElevenLabs', m) };
+      : { ok: false, credits: null, detail: trouble('ElevenLabs', reason(m) ? m : r) }; // the more telling refusal
+  }
+
+  async function tripo(key) {
+    const r = await get(`${TRIPO_BASE}/account/balance`, { Authorization: `Bearer ${key}` });
+    if (r.status !== 200 || r.json?.code !== 0) return { ok: false, credits: null, detail: r.status === 200 ? 'Tripo answered with an error' : trouble('Tripo', r) };
+    const credits = parseFloat(r.json.data?.balance); // a float, maybe sent as a string
+    return Number.isFinite(credits)
+      ? { ok: true, credits, detail: `Tripo accepted the key; ${credits} credits left` }
+      : { ok: true, credits: null, detail: 'Tripo accepted the key' };
   }
 
   // A provider check: the visitor's key, else the team's, else none.
@@ -100,8 +118,8 @@ export function createHandler(deps = {}) {
   const isHost = (req) => !env.HOST_TOKEN || tokenMatches(req.headers?.['x-host-token'], env.HOST_TOKEN);
   const TV_ONLY = { ok: false, using: 'none', detail: 'Team checks run from the TV only' };
 
-  async function provider(req, header, teamKey, name, test) {
-    const key = userKey(req, header);
+  async function provider(req, header, teamKey, name, test, read = userKey) {
+    const key = read(req, header);
     if (key === null) return { ok: false, using: 'yours', detail: `That does not look like a ${name} key` };
     if (!key && !isHost(req)) return TV_ONLY;
     const team = String(teamKey ?? '').trim();
@@ -111,6 +129,7 @@ export function createHandler(deps = {}) {
 
   async function check(service, req) {
     if (service === 'gemini') return provider(req, 'x-gemini-key', env.GEMINI_API_KEY, 'Gemini', gemini);
+    if (service === 'tripo') return provider(req, 'x-tripo-key', env.TRIPO_API_KEY, 'Tripo', tripo, tripoKey);
     if (service === 'elevenlabs') {
       const out = await provider(req, 'x-elevenlabs-key', env.ELEVENLABS_API_KEY, 'ElevenLabs', elevenlabs);
       if (out.using === 'team' && out.ok && env.SOUND_GEN !== 'on') out.detail += '; sound generation is off on this server';
@@ -118,9 +137,16 @@ export function createHandler(deps = {}) {
     }
     if (!isHost(req)) return TV_ONLY;
     if (service === 'storage') {
-      return String(env.BLOB_READ_WRITE_TOKEN ?? '').trim()
-        ? { ok: true, using: 'team', detail: 'Blob storage is connected' }
-        : { ok: false, using: 'none', detail: 'No Blob store connected' };
+      // A newer store connects by BLOB_STORE_ID (OIDC, which @vercel/blob uses on its own) instead of a token.
+      if (!(String(env.BLOB_READ_WRITE_TOKEN ?? '').trim() || String(env.BLOB_STORE_ID ?? '').trim()))
+        return { ok: false, using: 'none', detail: 'No Blob store connected' };
+      // Look up a path nothing writes: "not found" proves the store answers these credentials, and nothing is stored.
+      const r = await within(Promise.resolve().then(async () => {
+        const b = await blob();
+        try { await b.head('check/never-written.txt'); return 'ok'; } catch (err) { return err instanceof b.BlobNotFoundError ? 'ok' : 'refused'; }
+      }).catch(() => 'refused'));
+      if (r === TIMED_OUT) return { ok: false, using: 'team', detail: `Blob storage did not answer in ${Math.ceil(timeoutMs / 1000)} s` };
+      return r === 'ok' ? { ok: true, using: 'team', detail: 'Blob storage is connected' } : { ok: false, using: 'team', detail: 'Blob storage refused the check' };
     }
     let sf;
     try { sf = await snowflake(); } catch { return { ok: false, using: 'none', detail: 'Snowflake support failed to load' }; }

@@ -1,35 +1,449 @@
-/* src/host/artwork.js's DOM on the TV stage: the gallery overlay (G) with 12 project cards in a 4-wide grid, and the
-   drop hint shown while a file is dragged over the page. Paper cards on the Prussian ground; brass marks only the
-   focused card. Tokens only; TV type at 28 px or more. */
-.art-gallery {
-  position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column; gap: var(--space-1); padding: 28px 40px;
-  background: color-mix(in srgb, var(--prussian-deep) 94%, transparent); color: var(--cream);
-  font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
+/* src/host/artwork.js's DOM: the gallery (G), the carriage sidebar with its two ways to ride, the boarding screen, and the drop
+   hint on the stage. The gallery is a night railway across the whole TV frame (margins included): every drawing is
+   a chocolate-and-cream carriage with gold lining, its picture hung inside a window; the shelves are two trains on
+   their tracks, today's pulled by a locomotive that is also the "Add a picture" button. The chosen carriage's lamp
+   comes on and the picture stands up in 3D through the window: it sinks, and every object Gemini outlined lifts off
+   as a die-cut flat at its depth guess, and holds still there. Brass marks the focused item and the
+   primary action. Tokens only; TV type 28 px, nothing under 20 px. */
+.art-gallery, .art-detail, .art-board {
+  /* The window's edges: #tv already spans the width (host.css widens it by --bleed-x a side); these screens also
+     reach over the letterbox above and below it (--bleed-y), so nothing of the stage or the page shows beside them.
+     Their content stays inside the central 1920 x 1080 frame. */
+  position: absolute; inset: calc(-1 * var(--bleed-y)) 0;
+  color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
   animation: tt-fade var(--fade) ease-out;
 }
-.art-gallery[hidden], .art-drop[hidden] { display: none; }
-.art-head { display: flex; align-items: baseline; gap: 28px; padding-bottom: var(--space-1); border-bottom: 1px solid var(--rule-frame); }
-.art-head h2 { margin: 0; font: 400 48px/1.1 var(--font-display); }
-.art-note, .art-store, .art-empty { margin: 0; color: var(--muted); }
-.art-store { font-family: var(--font-ui); }
-.art-cards {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: var(--space-1) 0 0; padding: 0; list-style: none;
+.art-gallery {
+  --edge: calc(96px + var(--bleed-x)); /* the frame's side margin, plus the letterbox; trains and track run out under it */
+  z-index: 7; display: flex; flex-direction: column; padding: calc(32px + var(--bleed-y)) var(--edge) var(--bleed-y); overflow: hidden;
+  background: var(--rail-night); /* flat: the trains and their tracks carry the scene, not a gradient */
 }
+.art-gallery[hidden], .art-detail[hidden], .art-board[hidden], .art-drop[hidden], .art-detail-tip[hidden] { display: none; }
+
+/* The night, drawn flat and kept behind everything (z-index -1 inside the gallery's own stacking context): a crescent
+   moon and twinkling stars, and per line a strip of far hills and telegraph poles standing on the rail, scrolling
+   by at two speeds as if the train were moving. Reduced motion stills them. */
+.art-sky { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; pointer-events: none; }
+.art-sky .moon { fill: var(--cream); }
+.art-sky .bite { fill: var(--rail-night); }
+.art-sky .star { fill: var(--frame-ink); opacity: .35; animation: art-star 3.2s ease-in-out infinite alternate; }
+.art-scenery {
+  position: absolute; z-index: -1; left: calc(-1 * var(--edge)); bottom: 17px; width: calc(1920px + 2 * var(--bleed-x)); height: 200px;
+  overflow: hidden; pointer-events: none;
+}
+.art-scenery .hills { fill: color-mix(in srgb, var(--rail-dusk) 70%, var(--rail-night)); }
+.art-scenery .poles { fill: var(--steel); }
+.art-scenery .wire { fill: none; stroke: var(--steel); stroke-width: 2; }
+.minor .art-scenery { opacity: .7; }
+/* The trains travel: the hills drift, the poles pass, the sleepers run under the wheels and the steam trails back, all
+   rightward, since the engine faces left. These few are exempt from reduced motion (the OS setting and M), as the
+   owner asked for the moving-train illusion on this kiosk; host.css's blanket rules still still everything else.
+   Poles and sleepers share one speed, 1920 px in 28 s. */
+#tv .art-scenery .far { animation: art-pass 90s linear infinite !important; }
+#tv .art-scenery .near { animation: art-pass 28s linear infinite !important; }
+#tv .art-gallery .art-shelf::before { animation: art-sleepers .64s linear infinite !important; }
+#tv .art-engine .puffs circle { animation: art-puff 2.4s ease-out infinite !important; }
+#tv .art-engine .puffs circle:nth-child(2) { animation-delay: .8s !important; }
+#tv .art-engine .puffs circle:nth-child(3) { animation-delay: 1.6s !important; }
+@keyframes art-pass { from { transform: translateX(-1920px); } to { transform: none; } }
+@keyframes art-sleepers { from { background-position: 0 3px, 0 8px; } to { background-position: 0 3px, 44px 8px; } }
+@keyframes art-star { to { opacity: .9; } }
+
+/* One quiet header: the title. */
+.art-head { display: flex; align-items: baseline; }
+.art-head h2 { margin: 0; font: 400 48px/1 var(--font-display); }
+
+/* A line: its station nameboard (an enamel sign), then the train on its track. The track runs edge to edge: a steel
+   rail over wooden sleepers. */
+/* Each line sizes its own carriages: today's at full size, the samples' siding smaller and further down. */
+.art-shelf { position: relative; margin-top: 20px; }
+.art-shelf.major { --car-w: 300px; --mat-h: 206px; --plate-h: 164px; --title-fs: 28px; }
+.art-shelf.minor { --car-w: 248px; --mat-h: 166px; --plate-h: 124px; --title-fs: 24px; margin-top: 28px; }
+.art-shelf::before {
+  content: ''; position: absolute; left: calc(-1 * var(--edge)); right: calc(-1 * var(--edge)); bottom: 0; height: 20px;
+  background:
+    linear-gradient(var(--rail), var(--rail)) 0 3px / 100% 3px no-repeat,
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--sleeper) 70%, transparent) 0 14px, transparent 14px 44px) 0 8px / 100% 8px no-repeat;
+}
+.art-shelf-head { display: flex; align-items: center; gap: 12px; }
+.art-shelf-head h3 {
+  margin: 0; padding: 2px 18px 3px; border-radius: 6px; background: var(--cream); color: var(--livery);
+  box-shadow: inset 0 0 0 2px var(--cream), inset 0 0 0 4px var(--livery);
+  font: 400 28px/1.2 var(--font-display);
+}
+.minor .art-shelf-head h3 { font-size: 24px; }
+.art-count { font: 400 22px/1 var(--font-mono); color: var(--muted); }
+.art-count:empty { display: none; }
+
+/* The train: carriages coupled 56 px apart; room above for roofs, below for wheels. */
+.art-row {
+  position: relative; display: flex; gap: 56px; margin: 0 calc(-1 * var(--edge)); padding: 34px var(--edge) 46px; list-style: none;
+  overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth;
+}
+.art-row::-webkit-scrollbar { display: none; }
+.art-row.fade-r { mask-image: linear-gradient(90deg, var(--ink) calc(100% - 120px), transparent); }
+.art-row.fade-l { mask-image: linear-gradient(90deg, transparent, var(--ink) 120px); }
+.art-row.fade-l.fade-r { mask-image: linear-gradient(90deg, transparent, var(--ink) 120px, var(--ink) calc(100% - 120px), transparent); }
+@media (prefers-reduced-motion: reduce) { .art-row { scroll-behavior: auto; } }
+#tv.reduced .art-row { scroll-behavior: auto; }
+.art-slot { position: relative; flex: none; display: flex; animation: art-roll 520ms cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(var(--n) * 60ms); }
+/* The coupling to the carriage (or engine) in front. */
+.art-slot + .art-slot::before {
+  content: ''; position: absolute; left: -58px; bottom: 10px; width: 60px; height: 4px; border-radius: 2px; background: var(--steel-2);
+}
+
+/* A carriage: chocolate lower panels with a gold line inset from the edge, an arched roof, a destination board on
+   top and two bogies of wheels below, standing on the rail. */
 .art-card {
-  display: flex; flex-direction: column; gap: 2px; width: 100%; min-height: var(--tap); padding: 8px 8px 10px; text-align: left;
-  background: var(--paper); color: var(--ink); font: inherit; cursor: pointer;
-  border: 1px solid var(--rule-ink); border-radius: var(--radius-card); box-shadow: var(--shadow-card);
+  position: relative; isolation: isolate; display: flex; flex-direction: column; width: var(--car-w); padding: 10px 10px 12px;
+  background: var(--livery); color: var(--cream); border-radius: 10px 10px 6px 6px;
+  box-shadow: inset 0 0 0 5px var(--livery), inset 0 0 0 6px color-mix(in srgb, var(--brass) 70%, transparent), 0 10px 18px var(--rail-night);
+  transition: transform 360ms cubic-bezier(.3, 1.4, .5, 1);
 }
-/* The selection is a thick brass ring plus aria-current, not a colour change alone. */
-.art-card.selected, .art-card:focus-visible { outline: 4px solid var(--focus); outline-offset: 4px; box-shadow: var(--shadow-lift); }
-.art-pic { height: 136px; margin-bottom: 4px; overflow: hidden; border-radius: 4px; background: var(--prussian-deep); }
-.art-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.art-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 400 30px/1.2 var(--font-display); }
-.art-meta { display: flex; align-items: center; gap: var(--space-1); font-family: var(--font-mono); color: var(--ink-soft); }
-.art-chip { padding: 0 10px; border: 1px solid var(--ink); border-radius: var(--radius-pill); font-family: var(--font-ui); color: var(--ink); }
-.art-badge { color: var(--ink-soft); }
-.art-badge.saved { color: var(--ok-ink); font-weight: 600; }
-.art-badge.saved::before { content: "✓ "; }
+.art-card::before {
+  content: ''; position: absolute; z-index: -1; left: -4px; right: -4px; top: -16px; height: 26px;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0; background: var(--steel); border-top: 2px solid var(--steel-2);
+}
+/* Two bogies, each a steel frame over a pair of spoked-hub wheels, hung from the underframe; wheels touch the rail. */
+.art-card::after {
+  content: ''; position: absolute; z-index: -1; left: 14px; right: 14px; bottom: -29px; height: 30px;
+  --wheel: radial-gradient(circle, var(--steel) 0 10px, var(--steel-2) 10px 13px, transparent 13.5px);
+  --frame: linear-gradient(var(--steel), var(--steel));
+  background:
+    var(--wheel) left 0 bottom 0 / 28px 28px no-repeat, var(--wheel) left 40px bottom 0 / 28px 28px no-repeat,
+    var(--wheel) right 40px bottom 0 / 28px 28px no-repeat, var(--wheel) right 0 bottom 0 / 28px 28px no-repeat,
+    var(--frame) left 8px top 14px / 52px 6px no-repeat, var(--frame) right 8px top 14px / 52px 6px no-repeat,
+    linear-gradient(var(--livery-deep), var(--livery-deep)) 0 0 / 100% 8px no-repeat;
+}
+/* The chosen carriage rises on its springs and its lamp comes on: no box, no glow. */
+.art-card.selected, .art-card:has(.art-open:focus-visible) {
+  transform: translateY(-6px);
+  box-shadow: inset 0 0 0 5px var(--livery), inset 0 0 0 6px var(--brass), 0 10px 18px var(--rail-night);
+}
+.art-open {
+  display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 0; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.art-open:focus-visible { outline: none; }
+
+/* The window band: cream upper panels around a window into the dark carriage, where the picture hangs. The
+   perspective lives here so the picture can stand out through the window. */
+.art-mat {
+  position: relative; display: grid; place-items: center; height: var(--mat-h); padding: 10px 14px 32px;
+  border-radius: 6px 6px 2px 2px; background: var(--cream);
+  perspective: 760px; perspective-origin: 50% 40%;
+}
+.art-mat::before {
+  content: ''; position: absolute; inset: 5px 8px 27px; border-radius: 12px; background: var(--livery-deep);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--brass) 60%, var(--livery-deep)), inset 0 8px 18px var(--rail-night);
+  transition: background 500ms;
+}
+.selected .art-mat::before, .art-mat.selected::before {
+  background: color-mix(in srgb, var(--lamp) 40%, var(--livery-deep)); /* the lamp is on: one flat warm fill */
+}
+.art-tilt { position: relative; display: grid; place-items: center; width: 100%; height: var(--plate-h); transform-style: preserve-3d; }
+.art-plate {
+  position: relative; display: block; width: min(100%, calc(var(--plate-h) * var(--ar, 1.333))); aspect-ratio: var(--ar, 1.333);
+  max-height: var(--plate-h); transform-style: preserve-3d;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 600ms cubic-bezier(.2, .8, .2, 1);
+}
+.selected .art-plate { transform: rotateX(var(--rx, 12deg)) rotateY(var(--ry, -20deg)); }
+
+/* The back flat: the picture, which sinks and dims while the cut-outs lift; under each cut-out, the blueprint. */
+.art-back {
+  position: absolute; inset: 0; overflow: hidden; border-radius: 2px; box-shadow: 0 1px 4px var(--rail-night);
+  background: var(--livery-deep); transition: transform 600ms cubic-bezier(.2, .8, .2, 1);
+}
+.art-base { display: block; width: 100%; height: 100%; transition: filter 600ms; }
+/* Darker than the picture, so the slivers a lifted flat uncovers read as shadowed gaps. */
+.art-hole {
+  position: absolute; inset: 0; opacity: 0; transition: opacity 500ms 120ms;
+  background-color: color-mix(in srgb, var(--prussian) 55%, var(--prussian-deep));
+  background-image: linear-gradient(var(--rule-frame) 1px, transparent 1px), linear-gradient(90deg, var(--rule-frame) 1px, transparent 1px);
+  background-size: 7px 7px;
+}
+.selected[data-peek="ready"] .art-back { transform: translateZ(-14px); }
+.selected[data-peek="ready"] .art-base { filter: brightness(.72) saturate(.85); }
+.selected[data-peek="ready"] .art-hole { opacity: .94; }
+
+/* A cut-out: the picture clipped to one object's outline, a paper edge, and a shadow that grows with its lift. */
+.art-lift {
+  position: absolute; inset: 0; pointer-events: none; transform: translateZ(0);
+  filter: drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent);
+  transition: transform 640ms cubic-bezier(.2, .9, .3, 1.25), filter 640ms;
+  transition-delay: calc(var(--k) * 55ms);
+}
+.selected[data-peek="ready"] .art-lift {
+  transform: translateZ(var(--z));
+  filter: drop-shadow(0 0 .6px var(--paper)) drop-shadow(0 0 .6px var(--paper))
+    drop-shadow(calc(var(--z) * .14) calc(var(--z) * .22) calc(var(--z) * .12) var(--vignette));
+}
+/* Still: a lifted cut-out stands at its depth and never sways, drifts or flickers. */
+.art-cut { position: absolute; inset: 0; background-size: 100% 100%; }
+
+/* While peeking, a tag in the window band says what the layers are. */
+.art-peekline {
+  position: absolute; left: 50%; bottom: 4px; z-index: 2; max-width: calc(100% - 24px); overflow: hidden; padding: 0 12px;
+  transform: translateX(-50%); border: 1px solid var(--rule-ink); border-radius: var(--radius-pill); background: var(--paper);
+  font: 400 20px/1.3 var(--font-ui); color: var(--ink-soft); white-space: nowrap; text-overflow: ellipsis;
+  opacity: 0; transition: opacity 300ms 200ms;
+}
+.art-peekline:empty { display: none; }
+.selected .art-peekline { opacity: 1; }
+
+/* Lettering on the lower panels: the title in gold leaf, where and when in cream. */
+.art-title {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; height: calc(2 * 1.1em);
+  margin-top: 8px; padding: 0 6px; font: 400 var(--title-fs)/1.1 var(--font-display); color: var(--brass); text-wrap: balance;
+}
+/* Where and when show on the chosen (or pointed-at) carriage only; the rest show picture and title. */
+.art-meta {
+  display: flex; align-items: center; gap: var(--space-1); min-height: 30px; padding: 0 6px;
+  font: 400 22px/1.3 var(--font-mono); color: var(--frame-ink); opacity: 0; transition: opacity 240ms;
+}
+.art-card.selected .art-meta, .art-card:hover .art-meta, .art-card:focus-within .art-meta { opacity: 1; }
+.art-by { overflow: hidden; white-space: nowrap; font: 400 22px/1.3 var(--font-ui); color: var(--frame-ink); }
+.art-chip { padding: 0 10px; border: 1px solid var(--cream); border-radius: var(--radius-pill); font-family: var(--font-ui); color: var(--cream); }
+
+/* The locomotive heading today's train: the "Add a picture" button, its name painted above it like a headboard. */
+.art-add {
+  position: relative; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; width: 270px; padding: 0;
+  border: 0; border-radius: 12px; background: none; box-shadow: none; color: var(--cream); font: inherit; text-align: center; cursor: pointer;
+}
+.art-add::before, .art-add::after { content: none; }
+.art-add .art-title { display: block; height: auto; margin: 0; color: var(--cream); font-size: 30px; transition: color 240ms; }
+.art-add-note { color: var(--muted); font-size: 22px; }
+/* Chosen, the engine glows like the carriages, its headboard turns brass and its cab lamp comes on: no box. */
+.art-add.selected, .art-add:focus-visible { outline: none; box-shadow: none; transform: none; }
+.art-add.selected .art-title, .art-add:focus-visible .art-title { color: var(--brass); }
+.art-add.selected .art-engine, .art-add:focus-visible .art-engine { transform: translateY(-4px); }
+.art-engine { transition: transform 300ms; }
+/* Its wheels stand on the rail: the svg drops below the carriages' line by the wheels' reach. */
+.art-engine { display: block; width: 270px; height: 180px; margin: 48px 0 -36px; overflow: visible; }
+.art-engine .body { fill: var(--livery); }
+.art-engine .dark { fill: var(--steel); }
+.art-engine .brass, .art-engine .hub { fill: var(--brass); }
+.art-engine .lamp { fill: var(--lamp); }
+.art-engine .window { fill: var(--livery-deep); stroke: var(--brass); stroke-width: 3; transition: fill 400ms; }
+.art-add.selected .art-engine .window, .art-add:focus-visible .art-engine .window { fill: var(--lamp); }
+.art-engine .wheel { fill: var(--livery-deep); stroke: var(--rail); stroke-width: 5; }
+.art-engine .puffs { fill: var(--cream); opacity: .3; }
+.art-engine .puffs circle { transform-box: fill-box; transform-origin: center; }
+
+/* Behind the engine, four demonstration carriages walk through what happens to a picture, using the sketch sample.
+   They are real carriages (roof, lining, bogies), only in a heritage livery, Brunswick green, so they read as the
+   railway's own explanation rather than as pictures to ride. Each carries its step on a destination board. */
+.art-demo { background: var(--demo); box-shadow: inset 0 0 0 5px var(--demo), inset 0 0 0 6px color-mix(in srgb, var(--brass) 70%, transparent), 0 10px 18px var(--rail-night); }
+.art-demo .art-mat::before { background: var(--demo-deep); }
+.art-demo .art-mat.selected::before { background: color-mix(in srgb, var(--lamp) 40%, var(--demo-deep)); }
+.art-ghost-n {
+  position: absolute; top: -34px; left: 50%; z-index: 3; transform: translateX(-50%); padding: 0 12px; white-space: nowrap;
+  border: 2px solid var(--demo-deep); border-radius: 4px; background: var(--cream); color: var(--demo-deep);
+  font: 600 20px/1.35 var(--font-ui);
+}
+.art-ghost-n::before { content: 'Step '; }
+.art-ghost-text { margin-top: auto; padding: 8px 6px 0; font: 400 var(--title-fs)/1.15 var(--font-display); color: var(--cream); text-wrap: balance; }
+
+/* The arrows from each step to the next: a brass route line arcing over the coupling, its dashes running forward. */
+.art-step-arrow { position: absolute; z-index: 4; top: -30px; left: calc(100% - 52px); width: 160px; height: 44px; overflow: visible; pointer-events: none; }
+.art-step-arrow .line { fill: none; stroke: var(--brass); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 9 7; animation: art-flow 1.1s linear infinite; }
+.art-step-arrow .head { fill: var(--brass); }
+@keyframes art-flow { to { stroke-dashoffset: -16; } }
+
+/* Step 4's rider: a cut-paper figure in the first player's colour, standing on the garden path in front of the picture. */
+.art-rider {
+  position: absolute; left: 46%; top: 60%; width: 6%; aspect-ratio: 1 / 2.2; transform: translateZ(72px);
+  filter: drop-shadow(0 0 1px var(--paper)) drop-shadow(0 0 1px var(--paper)) drop-shadow(4px 8px 4px var(--vignette));
+}
+.art-rider::before, .art-rider::after { content: ''; position: absolute; background: var(--slot-1); }
+.art-rider::before { left: 22%; top: 0; width: 56%; aspect-ratio: 1; border-radius: 50%; }
+.art-rider::after { inset: 30% 0 0; clip-path: polygon(30% 0, 70% 0, 100% 100%, 0 100%); }
+
+/* The foot of the screen: the keys as keycaps, then the one caveat, kept quiet. */
+.art-foot {
+  display: flex; align-items: center; gap: 40px; margin-top: auto; padding: 16px 0 28px;
+  font-size: 22px; color: var(--muted);
+}
+.art-foot kbd {
+  display: inline-block; min-width: 34px; margin-right: 6px; padding: 1px 8px; text-align: center;
+  border: 1px solid var(--rule-frame); border-bottom-width: 3px; border-radius: 6px;
+  font: 400 20px/1.3 var(--font-mono); color: var(--frame-ink);
+}
+.art-foot-note { margin-left: auto; }
+.art-outline { position: absolute; inset: 0; width: 100%; height: 100%; }
+.art-outline polygon {
+  fill: color-mix(in srgb, var(--prussian) 14%, transparent); stroke: var(--prussian); stroke-width: 2.5;
+  stroke-dasharray: 9 5; stroke-linejoin: round; vector-effect: non-scaling-stroke;
+}
+
+/* The sidebar: a printed carriage manifest sliding in from the right over the dimmed line. The picture lies flat in
+   its lit window; below, a hint, its title and the two tickets. */
+.art-detail { z-index: 9; background: color-mix(in srgb, var(--rail-night) 55%, transparent); }
+.art-detail-panel {
+  --mat-h: 330px; --plate-h: 284px;
+  position: absolute; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: var(--space-2);
+  width: 640px; padding: 44px 48px 44px; overflow-y: auto;
+  background: var(--paper); color: var(--ink); border-left: 8px solid var(--livery);
+  box-shadow: -24px 0 48px var(--rail-night); animation: art-slide 340ms cubic-bezier(.2, .8, .2, 1);
+}
+.art-detail-kicker { margin: 0; padding-right: 56px; font: 400 22px/1.3 var(--font-mono); color: var(--ink-soft); }
+.art-detail-view { position: relative; }
+.art-detail-view .art-mat { width: 100%; box-shadow: inset 0 0 0 1px var(--rule-ink); }
+.art-detail-view .art-mat::before {
+  background: color-mix(in srgb, var(--lamp) 40%, var(--livery-deep));
+}
+/* Flat until pointed at: then that part (and only it) lifts out, casts its shadow and leaves its blueprint gap, while
+   the rest of the picture dims a little behind it. artwork.js finds the part on the flat picture, so no layer here
+   takes the pointer; a part with no cut-out gets its blueprint outline (.art-outline) instead. */
+.art-detail-view .art-base { transition: filter 300ms; }
+.art-detail-view .has-hot .art-base { filter: brightness(.78) saturate(.85); }
+.art-detail-view .art-hole.hot { opacity: .94; transition-delay: 0s; }
+.art-detail-view .art-lift.hot {
+  transform: translateZ(calc(var(--z) + 48px)); transition-delay: 0s;
+  filter: drop-shadow(0 0 .6px var(--paper)) drop-shadow(0 0 .6px var(--paper))
+    drop-shadow(calc(var(--z) * .14 + 8px) calc(var(--z) * .22 + 12px) calc(var(--z) * .12 + 8px) var(--vignette));
+}
+.art-detail-tip {
+  position: absolute; z-index: 3; transform: translateY(-130%); pointer-events: none; padding: 2px 16px 4px;
+  border-radius: var(--radius-pill); background: var(--livery); color: var(--cream); box-shadow: var(--shadow-card);
+  font: 400 28px/1.25 var(--font-display); white-space: nowrap;
+}
+.art-detail-hint { margin: 0; font-size: 22px; color: var(--ink-soft); }
+.art-detail-hint:empty { display: none; }
+.art-detail-panel h2 { margin: var(--space-2) 0 0; font: 400 52px/1.08 var(--font-display); color: var(--livery); text-wrap: balance; }
+.art-detail-note { margin: 0; font-size: 22px; color: var(--ink-soft); }
+
+/* The two tickets at the foot of the sidebar: card tickets notched at both ends, the single on buff stock, the party
+   fare on pink, both printed in livery brown; the focused one lifts and tilts as if picked up, with a brass glow. */
+.art-tickets { display: flex; flex-direction: column; gap: var(--space-2); margin-top: auto; padding-top: var(--space-2); }
+.art-ticket {
+  --stock: color-mix(in srgb, var(--brass) 30%, var(--paper));
+  display: flex; align-items: center; gap: 24px; width: 100%; padding: 20px 40px; border: 0; text-align: left;
+  background:
+    radial-gradient(circle at 0 50%, transparent 16px, var(--stock) 17px) left / 51% 100% no-repeat,
+    radial-gradient(circle at 100% 50%, transparent 16px, var(--stock) 17px) right / 51% 100% no-repeat;
+  filter: drop-shadow(0 4px 8px var(--rule-ink)); color: var(--ink); font: inherit; cursor: pointer;
+  transition: transform 260ms cubic-bezier(.3, 1.4, .5, 1), filter 260ms;
+}
+.art-ticket.group { --stock: color-mix(in srgb, var(--slot-3) 22%, var(--paper)); }
+.art-ticket:hover, .art-ticket:focus-visible { outline: none; transform: translateY(-4px) rotate(-1deg); }
+.art-ticket:focus-visible { filter: drop-shadow(0 0 2px var(--focus)) drop-shadow(0 0 2px var(--focus)) drop-shadow(0 8px 14px var(--rule-ink)); }
+.art-ticket-words { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.art-ticket-name { font: 400 36px/1.1 var(--font-display); color: var(--livery); }
+.art-ticket-note { font-size: 22px; line-height: 1.3; color: var(--ink-soft); text-wrap: balance; }
+/* Passengers: a head and shoulders each, one for the single, three for the party, in the same 120 px column. */
+.art-ticket-icon {
+  --head: radial-gradient(circle at 50% 30%, var(--livery) 0 14px, transparent 15px);
+  --body: radial-gradient(ellipse 26px 22px at 50% 100%, var(--livery) 0 98%, transparent);
+  flex: none; width: 120px; height: 72px;
+  background: var(--head) center / 64px 72px no-repeat, var(--body) center / 64px 72px no-repeat;
+}
+.group .art-ticket-icon {
+  background:
+    var(--head) 0 0 / 64px 72px no-repeat, var(--body) 0 0 / 64px 72px no-repeat,
+    var(--head) 56px 0 / 64px 72px no-repeat, var(--body) 56px 0 / 64px 72px no-repeat,
+    radial-gradient(circle at 50% 30%, var(--livery-deep) 0 14px, transparent 15px) 28px 6px / 64px 72px no-repeat,
+    radial-gradient(ellipse 26px 22px at 50% 100%, var(--livery-deep) 0 98%, transparent) 28px 6px / 64px 72px no-repeat;
+}
+.art-detail-close {
+  position: absolute; top: 28px; right: 28px; display: grid; place-items: center; width: var(--tap); height: var(--tap);
+  padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink-soft); cursor: pointer;
+}
+.art-detail-close::before { content: '×'; font: 400 40px/1 var(--font-ui); }
+.art-detail-close:hover { background: var(--rule-ink); color: var(--ink); }
+.art-detail-close:focus-visible { outline: 3px solid var(--livery); outline-offset: 2px; }
+
+/* The boarding screen, laid out like a console's controller-pairing screen. Left, the party's ticket: a full-height
+   paper panel with the join code. Right, top-aligned with it: the title, the six seats as a 3 x 2 grid of cards, and
+   the two buttons on the panel's bottom line. Spacing on the 8 px scale (16 / 24 / 32 / 48 / 96); one radius, 16 px,
+   for panels and cards; pills for buttons. */
+.art-board {
+  --r: 16px;
+  z-index: 11; display: grid; grid-template-columns: 560px 1fr; gap: 96px;
+  padding: calc(96px + var(--bleed-y)) calc(96px + var(--bleed-x));
+  background: var(--rail-night);
+}
+/* The party ticket: printed card stock with a livery rule inset from its edge, the code in the middle, and a stub
+   across the foot behind a perforation, punched at both ends. */
+.art-board-ticket {
+  position: relative; display: flex; flex-direction: column; align-items: center; padding: 48px 32px 0;
+  border-radius: var(--r); background: var(--paper); color: var(--ink);
+  box-shadow: inset 0 0 0 10px var(--paper), inset 0 0 0 12px var(--livery);
+}
+.art-board-qr { margin: auto 0; }
+.art-board-stub {
+  position: relative; align-self: stretch; margin: 0 -32px; padding: 24px 32px 32px; text-align: center;
+  border-top: 3px dashed var(--livery); font: 400 28px/1.2 var(--font-display); color: var(--livery);
+}
+.art-board-stub::before, .art-board-stub::after {
+  content: ''; position: absolute; top: -18px; width: 32px; height: 32px; border-radius: 50%; background: var(--rail-night);
+}
+.art-board-stub::before { left: -16px; }
+.art-board-stub::after { right: -16px; }
+/* With no relay, the same panel, emptied to a plain outline holding one sentence: the layout never jumps. */
+.art-board-ticket.off { justify-content: center; padding: 48px; background: none; box-shadow: inset 0 0 0 2px var(--rule-frame); }
+.art-board-qr { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+.art-board-qr canvas { display: block; image-rendering: pixelated; }
+.art-board-qr figcaption { font: 400 40px/1.15 var(--font-display); color: var(--livery); text-wrap: balance; }
+.art-board-qr .url { font: 400 22px/1.3 var(--font-mono); color: var(--ink-soft); }
+.art-board-off { margin: 0; font: 400 40px/1.25 var(--font-display); color: var(--cream); text-align: center; text-wrap: balance; }
+
+.art-board-side { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.art-board-head { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
+/* "Now boarding" on the same enamel station sign as the gallery's lines. */
+.art-board-kicker {
+  margin: 0; padding: 2px 18px 3px; border-radius: 6px; background: var(--cream); color: var(--livery);
+  box-shadow: inset 0 0 0 2px var(--cream), inset 0 0 0 4px var(--livery); font: 400 28px/1.2 var(--font-display);
+}
+.art-board-side h2 {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0;
+  font: 400 64px/1.08 var(--font-display); color: var(--cream); text-wrap: balance;
+}
+.art-seats-head { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; margin-top: 16px; }
+.art-seats-head h3 { margin: 0; font: 400 36px/1.2 var(--font-display); color: var(--cream); }
+.art-board-count { margin: 0; font-size: 22px; color: var(--muted); }
+
+/* The seats: an open one is a plain hairline frame with its number; a taken one tints toward its player's colour,
+   edges in it, and shows the phone in that colour beside the rider's name and seat. Cream text on the dark tint
+   holds its contrast for every player colour. No glows: colour and edge carry it. */
+.art-seats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin: 0; padding: 0; list-style: none; }
+.art-seat {
+  display: flex; align-items: center; justify-content: center; gap: 24px; min-width: 0; height: 232px; padding: 0 32px;
+  border: 2px solid var(--rule-frame); border-radius: var(--r);
+}
+/* The UI face: its lining figures sit level, where the display face's old-style ones bob. */
+.art-seat-n { font: 400 48px/1 var(--font-ui); color: var(--muted); }
+.art-seat.taken {
+  justify-content: flex-start; border: 3px solid var(--seat, var(--muted));
+  background: color-mix(in srgb, var(--seat, var(--muted)) 24%, var(--rail-night));
+}
+.art-seat.away { opacity: .5; }
+.art-seat.fresh { animation: art-seat-in 520ms cubic-bezier(.3, 1.6, .5, 1); }
+/* A phone: a rounded body with an earpiece slot and a home bar, in the player's colour. */
+.art-seat-phone { position: relative; flex: none; width: 56px; height: 96px; border: 6px solid var(--seat, var(--muted)); border-radius: 14px; }
+.art-seat-phone::before, .art-seat-phone::after {
+  content: ''; position: absolute; left: 50%; transform: translateX(-50%); border-radius: 2px; background: var(--seat, var(--muted));
+}
+.art-seat-phone::before { top: 5px; width: 14px; height: 3px; }
+.art-seat-phone::after { bottom: 5px; width: 18px; height: 3px; }
+.art-seat-words { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.art-seat-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  font: 400 32px/1.1 var(--font-display); color: var(--cream); text-wrap: balance;
+}
+.art-seat-sub { font-size: 22px; color: var(--frame-ink); }
+@keyframes art-seat-in { 0% { transform: scale(.85); } 60% { transform: scale(1.04); } 100% { transform: none; } }
+
+.art-board-btns { display: flex; gap: 24px; margin-top: auto; }
+.art-board-btns button { padding: 16px 32px; border-radius: var(--radius-pill); font: 600 28px/1.2 var(--font-ui); cursor: pointer; }
+.art-board-go { border: 0; background: var(--brass); color: var(--brass-ink); }
+.art-board-back { border: 2px solid var(--rule-frame); background: none; color: var(--cream); }
+.art-board-btns button:focus-visible { outline: 4px solid var(--cream); outline-offset: 4px; }
+
+@keyframes art-slide { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes art-roll { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: none; } }
+@keyframes art-puff { 0% { opacity: 0; transform: translate(0, 10px) scale(.6); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(26px, -16px) scale(1.3); } }
 
 .art-drop {
   position: absolute; inset: var(--space-3); z-index: 9; display: grid; place-items: center; pointer-events: none;

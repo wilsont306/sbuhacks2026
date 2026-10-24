@@ -5,6 +5,7 @@
   "name": "Rain, Steam, and Speed",
   "image": "/assets/turner-1920.jpg",
   "scene": "/samples/turner.scene.json",
+  "by": "Turner, 1844",
   "credit": "J. M. W. Turner, 1844. The National Gallery, London. Public domain (Wikimedia Commons)."
  },
  {
@@ -13,6 +14,7 @@
   "name": "House by the River (sketch)",
   "image": "/samples/sketch.svg",
   "scene": "/samples/sketch.scene.json",
+  "by": "Demo sketch",
   "credit": "Sample sketch drawn for this demo."
  },
  {
@@ -21,6 +23,7 @@
   "name": "The Starry Night",
   "image": "/samples/starry-night.jpg",
   "scene": "/samples/starry-night.scene.json",
+  "by": "Van Gogh, 1889",
   "credit": "Vincent van Gogh, 1889. The Museum of Modern Art, New York. Public domain (Wikimedia Commons)."
  }
 ]

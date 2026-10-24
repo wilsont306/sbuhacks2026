@@ -1,5 +1,6 @@
 {
   "buildCommand": "npm run build",
+  "installCommand": "ONNXRUNTIME_NODE_INSTALL=skip npm install",
   "outputDirectory": "dist",
   "rewrites": [
     {
@@ -50,11 +51,20 @@
     "api/sfx.js": {
       "maxDuration": 30
     },
+    "api/speak.js": {
+      "maxDuration": 30
+    },
     "api/projects.js": {
       "maxDuration": 15
     },
     "api/check.js": {
       "maxDuration": 15
+    },
+    "api/depth.js": {
+      "maxDuration": 15
+    },
+    "api/tripo.js": {
+      "maxDuration": 120
     }
   }
 }
