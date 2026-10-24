@@ -136,6 +136,10 @@ export function sceneDepth(scene, opts) {
   return { data, w, h, placeholder: false };
 }
 
+// Each paintable object's outline in image space (its mask, else its box), far first: the order objectIdMap paints
+// them in, so scene.js can draw the stops' outlines with nearer objects covering farther lines.
+export const objectOutlines = (scene) => layers(scene).map(({ index, pts }) => ({ index, pts }));
+
 // Which object owns each pixel, for the shader's glow on the object a figure stands at: i + 1 for scene.objects[i], 0 for none. Same rows,
 // fill and painting order as sceneDepth, unblurred so ids never mix at the edges.
 export function objectIdMap(scene, opts) {

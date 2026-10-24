@@ -6,12 +6,10 @@
    as a die-cut flat at its depth guess, and holds still there. Brass marks the focused item and the
    primary action. Tokens only; TV type 28 px, nothing under 20 px. */
 .art-gallery, .art-detail, .art-board {
-  /* The letterbox round the frame, in frame px (fit.js's visible area over the frame's scale): these screens reach
-     over it to the window's edges, so nothing of the stage or the page shows beside them. Their content stays
-     inside the 1920 x 1080 frame. */
-  --bleed-x: max(0px, (var(--vis-w, 100vw) / var(--fit, 1) - 1920px) / 2);
-  --bleed-y: max(0px, (var(--vis-h, 100vh) / var(--fit, 1) - 1080px) / 2);
-  position: absolute; inset: calc(-1 * var(--bleed-y)) calc(-1 * var(--bleed-x));
+  /* The window's edges: #tv already spans the width (host.css widens it by --bleed-x a side); these screens also
+     reach over the letterbox above and below it (--bleed-y), so nothing of the stage or the page shows beside them.
+     Their content stays inside the central 1920 x 1080 frame. */
+  position: absolute; inset: calc(-1 * var(--bleed-y)) 0;
   color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
   animation: tt-fade var(--fade) ease-out;
 }

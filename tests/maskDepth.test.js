@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { sceneDepth, pathPoints, objectHotspots, objectIdMap } from '../src/host/maskDepth.js';
+import { sceneDepth, pathPoints, objectHotspots, objectIdMap, objectOutlines } from '../src/host/maskDepth.js';
 import { depthAt, sampler } from '../src/host/depth.js';
 import { MIN_T, HOTSPOT_HALF_WIDTH } from '../src/shared/protocol.js';
 import { validateScene } from '../src/shared/scene-validate.js';
@@ -240,6 +240,17 @@ test('objectIdMap: i + 1 for scene.objects[i], 0 for none; skipped entries keep 
   assert.deepEqual([...new Set(m.data)].sort(), [0, 1, 4]);
   const d = objectIdMap({ objects: [] });
   assert.equal(d.w, 256); assert.equal(d.h, 192); assert.ok(d.data.every((x) => x === 0));
+});
+
+test('objectOutlines: the mask, else the box, far first like objectIdMap; skipped entries keep their indices', () => {
+  const tri = [[100, 100], [300, 100], [200, 400]];
+  const out = objectOutlines({ objects: [
+    obj({ box: [600, 600, 900, 900], depth: 0.2 }), null, obj({ box: null }), obj({ mask: tri, box: [100, 100, 300, 400], depth: 0.9 }),
+  ] });
+  assert.deepEqual(out.map((o) => o.index), [3, 0]); // the far one (depth 0.9) first
+  assert.deepEqual(out[0].pts, tri);
+  assert.deepEqual(out[1].pts, [[600, 600], [900, 600], [900, 900], [600, 900]]);
+  for (const bad of [null, {}, { objects: 'x' }]) assert.deepEqual(objectOutlines(bad), []);
 });
 
 test('objectIdMap: rows run bottom-up like sceneDepth, an object at the image top lands in the high rows', () => {

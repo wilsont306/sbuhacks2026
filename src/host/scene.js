@@ -13,7 +13,7 @@ import './host.css';
 import { HOTSPOT_HALF_WIDTH, ORIGINAL_MS, MIN_T } from '../shared/protocol.js';
 import { validateScene } from '../shared/scene-validate.js';
 import { placeholderDepth, sampler, depthTexture } from './depth.js';
-import { sceneDepth, objectIdMap, pathPoints, objectHotspots } from './maskDepth.js';
+import { sceneDepth, objectIdMap, objectOutlines, pathPoints, objectHotspots } from './maskDepth.js';
 import { loadSheets, paintSheet, sheetTexture, setFrame, shadowTexture, textSprite, drawLabel, WALK, IDLE, WAVE, ASPECT as FIG_ASPECT } from './figures.js';
 import { createPathOverlay } from './pathOverlay.js';
 import { FOV, LEAN_Y, TAG_GAP, TAG_H, rig, figH, groupBox, followAim, leanFor, stepView, pose } from './camera.js';
@@ -81,9 +81,11 @@ const camera = new THREE.PerspectiveCamera(FOV, SW / SH, 0.1, 50);
 
 const blank = new THREE.DataTexture(Uint8Array.from([stageBg.r, stageBg.g, stageBg.b, 1], (x) => x * 255), 1, 1);
 blank.needsUpdate = true;
+const noLines = new THREE.DataTexture(new Uint8Array(4), 1, 1); // no stops, no outlines: transparent
+noLines.needsUpdate = true;
 const uniforms = {
   map: { value: blank }, depthMap: { value: null }, idMap: { value: null }, amp: { value: AMP }, mode: { value: 0 },
-  glow: { value: glow },
+  glow: { value: glow }, outline: { value: noLines },
   cyan: { value: new THREE.Color(tok('--prussian')) }, cream: { value: new THREE.Color(tok('--cream')) },
 };
 // GLSL ES 1.0: the fixed 9-slot loop compares the texel's id instead of indexing the array with it.
@@ -98,13 +100,14 @@ const mat = new THREE.ShaderMaterial({
       for (int i = 0; i < ${SLOTS}; i++) { if (abs(id - float(i)) < 0.5) vGlow = glow[i]; }
       vec3 p = position; p.z += vD * amp;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
-  fragmentShader: `uniform sampler2D map; uniform int mode; uniform vec3 cyan; uniform vec3 cream;
+  fragmentShader: `uniform sampler2D map; uniform sampler2D outline; uniform int mode; uniform vec3 cyan; uniform vec3 cream;
     varying vec2 vUv; varying float vD; varying float vGlow;
     void main() {
       vec3 c = mode == 1 ? mix(cyan, cream, vD) : texture2D(map, vUv).rgb;
       // dark texels glow toward cream, pale ones toward Prussian: a cream glow on white paper moved pixels by 2/255
       vec3 tint = mix(cream, cyan, smoothstep(0.52, 0.62, dot(c, vec3(0.299, 0.587, 0.114))));
-      gl_FragColor = vec4(mix(c, tint, vGlow * 0.6), 1.0); }`,
+      vec4 line = texture2D(outline, vUv); // every stop's outline, over the picture and its glow
+      gl_FragColor = vec4(mix(mix(c, tint, vGlow * 0.6), line.rgb, line.a), 1.0); }`,
 });
 const relief = new THREE.Mesh(new THREE.PlaneGeometry(W, H, 1, 1), mat);
 scene.add(relief);
@@ -128,7 +131,31 @@ function idTexture({ data, w, h }) {
 function swapTex(key, tex) {
   const old = uniforms[key].value;
   uniforms[key].value = tex; upload(tex);
-  if (old && old !== blank && old !== tex) old.dispose();
+  if (old && old !== blank && old !== noLines && old !== tex) old.dispose();
+}
+
+// Where a figure can walk to: every stop's object outlined in ink with a paper edge (so the line reads on dark paint
+// too), drawn once per scene at the picture's own resolution. Far objects first, each one erasing what it covers
+// before its own line is drawn, so a line never runs across an object in front of it (objectIdMap's order).
+function outlineTexture(s, stopList, aspect) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(aspect >= 1 ? MAX_TEX : MAX_TEX * aspect); c.height = Math.round(aspect >= 1 ? MAX_TEX / aspect : MAX_TEX);
+  const g = c.getContext('2d'), k = Math.max(c.width, c.height) / 2048, ink = tok('--ink'), paper = tok('--paper');
+  const isStop = new Set(stopList.map((st) => st.index));
+  // A point on the picture's edge goes past it, so the sky's or a river's border draws no frame round the picture.
+  const at = (v, size) => (v <= 0.5 ? -12 * k : v >= 999.5 ? size + 12 * k : v / 1000 * size);
+  g.lineJoin = 'round';
+  for (const { index, pts } of objectOutlines(s)) {
+    g.beginPath();
+    pts.forEach(([x, y], i) => g[i ? 'lineTo' : 'moveTo'](at(x, c.width), at(y, c.height)));
+    g.closePath();
+    g.globalCompositeOperation = 'destination-out'; g.globalAlpha = 1; g.fill();
+    if (!isStop.has(index)) continue;
+    g.globalCompositeOperation = 'source-over';
+    g.strokeStyle = paper; g.globalAlpha = 0.7; g.lineWidth = 10 * k; g.stroke();
+    g.strokeStyle = ink; g.globalAlpha = 1; g.lineWidth = 4 * k; g.stroke();
+  }
+  return new THREE.CanvasTexture(c);
 }
 
 function loadImage(url) {
@@ -173,6 +200,7 @@ function build(tex, aspect, d, ids, points, newStops) {
   swapTex('map', tex);
   swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
   swapTex('idMap', idTexture(ids));
+  swapTex('outline', current && newStops.length ? outlineTexture(current, newStops, aspect) : noLines);
   depth = d; sample = sampler(d); stops = newStops; depthFromAi = false;
   if (notice === NO_IMAGE) notice = '';
   setPath({ image: imageUrl, points, plaques: stops });

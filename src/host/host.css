@@ -1,15 +1,19 @@
-/* The TV page: a fixed 1920 x 1080 frame scaled to fit the window (scene.js sets --fit), letterboxed in the same
-   night, so the frame has no visible edge. Grid: 236 px station margin | 1447 px stage | 237 px rider margin. The
-   relief takes each artwork's aspect inside the stage. The gallery's night railway: cream enamel signs, brass for the
-   line, the primary action and the focused item, hairlines instead of heavy borders. Tokens only (src/shared/tokens.css). */
+/* The TV page: a 1920 x 1080 frame scaled to fit the window (scene.js sets --fit). Grid: 236 px station margin |
+   1447 px stage | 237 px rider margin. A window wider than 16:9 widens both margins to its edges (--bleed-x, the
+   letterbox in frame px), so the panels never sit beside empty bars; a taller one is letterboxed top and bottom in the
+   same night, with no visible edge. The relief takes each artwork's aspect inside the stage. The gallery's night
+   railway: cream enamel signs, brass for the line, the primary action and the focused item, hairlines instead of
+   heavy borders. Tokens only (src/shared/tokens.css). */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--rail-night); }
 #tv [hidden] { display: none !important; }
 
 #tv {
-  position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+  --bleed-x: max(0px, (var(--vis-w, 100vw) / var(--fit, 1) - 1920px) / 2);
+  --bleed-y: max(0px, (var(--vis-h, 100vh) / var(--fit, 1) - 1080px) / 2);
+  position: absolute; left: 50%; top: 50%; width: calc(1920px + 2 * var(--bleed-x)); height: 1080px;
   transform: translate(-50%, -50%) scale(var(--fit, 1));
-  display: grid; grid-template-columns: var(--margin-w) 1447px 1fr;
+  display: grid; grid-template-columns: calc(var(--margin-w) + var(--bleed-x)) 1447px 1fr;
   background: var(--rail-night); color: var(--cream);
   font: 400 var(--fs-body-tv)/1.3 var(--font-ui);
 }
