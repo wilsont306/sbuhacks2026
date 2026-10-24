@@ -209,6 +209,29 @@ test('check snowflake: team only, configured() then one listProjectsResult row',
   assert.deepEqual([r.status, r.body.ok, r.body.using], [200, false, 'none']);
 });
 
+test('check snowflake: a PAT-only env (no user, no key) passes the real configured() and lists over the PAT', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const real = await import('../lib/snowflake.js');
+  const PAT = 'FAKE.pat.secret.0123456789abcdef';
+  const env = { SNOWFLAKE_ACCOUNT: 'myorg-myacct', SNOWFLAKE_WAREHOUSE: 'lb_wh', SNOWFLAKE_DATABASE: 'lb_db', SNOWFLAKE_SCHEMA: 'app', SNOWFLAKE_PAT: PAT };
+  const sent = [];
+  // The real module, its fetch swapped for one that answers status/json.
+  const over = (status, json) => async () => ({
+    ...real,
+    listProjectsResult: (n, opts) => real.listProjectsResult(n, { ...opts, fetch: async (url, init) => { sent.push([url, init.headers]); return { status, json: async () => json }; } }),
+  });
+  let r = await make({ env, snowflake: over(200, { resultSetMetaData: { rowType: [] }, data: [] }) }).ask('snowflake');
+  assert.deepEqual(r.body, { ok: true, using: 'team', detail: 'Snowflake answered' });
+  assert.equal(sent[0][0], 'https://myorg-myacct.snowflakecomputing.com/api/v2/statements');
+  assert.equal(sent[0][1].Authorization, `Bearer ${PAT}`);
+  assert.equal(sent[0][1]['X-Snowflake-Authorization-Token-Type'], 'PROGRAMMATIC_ACCESS_TOKEN');
+  const { ask, seen } = make({ env, snowflake: over(401, { code: '390303', message: `Invalid token ${PAT}` }) });
+  r = await ask('snowflake');
+  assert.deepEqual(r.body, { ok: false, using: 'team', detail: 'Snowflake did not answer' });
+  assert.equal(warn.mock.calls.length, 1);
+  for (const s of [...seen, ...warn.mock.calls.map((c) => c.arguments.join(' '))]) assert.ok(!s.includes(PAT.slice(0, 8)), s);
+});
+
 test('check storage: whether BLOB_READ_WRITE_TOKEN is set', async () => {
   assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: 'fake-blob-token' } }).ask('storage')).body, { ok: true, using: 'team', detail: 'Blob storage is connected' });
   assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: '  ' } }).ask('storage')).body, { ok: false, using: 'none', detail: 'No Blob store connected' });
