@@ -123,6 +123,14 @@ test('check elevenlabs: a 401 on the subscription falls back to the models list'
   const bad = make({ routes: { [SUB_URL]: { status: 401 }, [MODELS_URL]: { status: 401 } } });
   r = await bad.ask('elevenlabs', { headers: { 'x-elevenlabs-key': YOURS } });
   assert.deepEqual(r.body, { ok: false, using: 'yours', credits: null, detail: 'ElevenLabs refused the key' });
+  // ElevenLabs's own reason token comes through (never its message), from whichever refusal carries one.
+  const why = (status) => ({ status: 401, json: { detail: { status, message: 'long text with the key sk_abc…' } } });
+  r = await make({ routes: { [SUB_URL]: why('missing_permissions'), [MODELS_URL]: { status: 401 } } }).ask('elevenlabs', { headers: { 'x-elevenlabs-key': YOURS } });
+  assert.equal(r.body.detail, 'ElevenLabs refused the key (401 missing_permissions)');
+  r = await make({ routes: { [SUB_URL]: { status: 401 }, [MODELS_URL]: why('detected_unusual_activity') } }).ask('elevenlabs', { headers: { 'x-elevenlabs-key': YOURS } });
+  assert.equal(r.body.detail, 'ElevenLabs refused the key (401 detected_unusual_activity)');
+  r = await make({ routes: { [SUB_URL]: why('Not A Token!'), [MODELS_URL]: { status: 401 } } }).ask('elevenlabs', { headers: { 'x-elevenlabs-key': YOURS } });
+  assert.equal(r.body.detail, 'ElevenLabs refused the key');
   const down = make({ routes: { [SUB_URL]: { status: 500 } } });
   r = await down.ask('elevenlabs', { headers: { 'x-elevenlabs-key': YOURS } });
   assert.deepEqual([r.body.ok, r.body.detail], [false, 'ElevenLabs answered HTTP 500']);

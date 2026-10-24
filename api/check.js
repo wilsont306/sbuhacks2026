@@ -66,9 +66,15 @@ export function createHandler(deps = {}) {
     return within(work, ac, ms);
   }
 
+  // The provider's machine-readable reason (ElevenLabs: {detail: {status: 'missing_permissions'}}), a fixed token, never
+  // its message text.
+  const reason = (r) => {
+    const s = r.json && r.json.detail && r.json.detail.status;
+    return typeof s === 'string' && /^[a-z_]{3,40}$/.test(s) ? s : '';
+  };
   function trouble(name, r) {
     if (!r.status) return r.why === 'timeout' ? `${name} did not answer in ${Math.ceil(timeoutMs / 1000)} s` : `Could not reach ${name}`;
-    if ([400, 401, 403].includes(r.status)) return `${name} refused the key`;
+    if ([400, 401, 403].includes(r.status)) return `${name} refused the key` + (reason(r) ? ` (${r.status} ${reason(r)})` : '');
     if (r.status === 429) return `${name} says the key is over its limit`;
     return `${name} answered HTTP ${r.status}`;
   }
@@ -94,7 +100,7 @@ export function createHandler(deps = {}) {
     const m = await get(`${ELEVEN_URL}/models`, h, left);
     return m.status === 200
       ? { ok: true, credits: null, detail: 'ElevenLabs accepted the key (it may not read its credits)' }
-      : { ok: false, credits: null, detail: trouble('ElevenLabs', m) };
+      : { ok: false, credits: null, detail: trouble('ElevenLabs', reason(m) ? m : r) }; // the more telling refusal
   }
 
   async function tripo(key) {
