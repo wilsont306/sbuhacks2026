@@ -151,7 +151,8 @@ function linesFor(aspect) {
 function stepLines() {
   if (!lines || !current) return;
   const who = new Map(); // object index -> the first rider's colour there
-  for (const f of players.values()) if (f.near != null && !who.has(f.near)) who.set(f.near, f.color);
+  // in arrival order, as margins.js keeps its riders: the first to arrive colours a shared stop in both places
+  for (const f of [...players.values()].sort((a, b) => (a.nearAt ?? 0) - (b.nearAt ?? 0))) if (f.near != null && !who.has(f.near)) who.set(f.near, f.color);
   const key = [...who].map((e) => e.join(':')).sort().join('|');
   if (key === linesKey) return;
   linesKey = key;
@@ -171,13 +172,14 @@ function stepLines() {
     g.fillStyle = color; g.globalAlpha = 0.16; g.fill();
     g.globalAlpha = 1;
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]), bw = Math.max(...xs) - Math.min(...xs), bh = Math.max(...ys) - Math.min(...ys);
+    const line = () => { g.strokeStyle = ink; g.lineWidth = 15 * k; g.stroke(); g.strokeStyle = color; g.lineWidth = 7 * k; g.stroke(); };
+    line();
     if (bw < SMALL && bh < SMALL) { // too small to see by its outline: a ring round it too
       g.beginPath();
       g.arc((Math.max(...xs) + Math.min(...xs)) / 2000 * c.width, (Math.max(...ys) + Math.min(...ys)) / 2000 * c.height,
         Math.max(bw / 1000 * c.width, bh / 1000 * c.height) * 0.75 + 28 * k, 0, Math.PI * 2);
+      line();
     }
-    g.strokeStyle = ink; g.lineWidth = 15 * k; g.stroke();
-    g.strokeStyle = color; g.lineWidth = 7 * k; g.stroke();
   }
   lines.tex.needsUpdate = true;
 }
@@ -485,7 +487,7 @@ function step() {
   for (const [pid, f] of players) {
     if (f.lx && !f.frozen) { f.t = clamp(f.t + f.lx * SPEED * STEP, MIN_T, 1); f.facing = f.lx; f.phase += STEP * 8; }
     const st = stopAt(f.t), near = st ? st.index : null;
-    if (near !== f.near) { f.near = near; emit({ type: 'near', pid, object: near, label: st ? st.label : null }); if (pid === 0) renderHint(); }
+    if (near !== f.near) { f.near = near; f.nearAt = simTime; emit({ type: 'near', pid, object: near, label: st ? st.label : null }); if (pid === 0) renderHint(); }
     f.pulse = Math.max(0, f.pulse - STEP);
   }
   attract.idle += STEP;

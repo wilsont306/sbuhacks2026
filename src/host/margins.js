@@ -170,8 +170,8 @@ export function setScene(s, opts = {}) {
 
 // The stop a figure stands at (an object index; null when it stands at none), lit in that rider's colour.
 export function setNear(pid, index, color) {
+  riders.delete(pid); // re-inserted, so riders stay in arrival order (the first to arrive colours a shared stop)
   if (Number.isInteger(index)) riders.set(pid, { index, color: typeof color === 'string' ? color : '' });
-  else riders.delete(pid);
   paintNear();
 }
 
@@ -248,9 +248,9 @@ function renderScene() {
     routeScene = scene;
     const stops = scene ? objectHotspots(scene, pathPoints(scene, () => 0)) : [];
     els.legend.hidden = !stops.length;
-    els.route.replaceChildren(...stops.map((s) => {
+    els.route.replaceChildren(...stops.map((s, i) => {
       const li = h('li', '', h('span', 'thumb'), full(h('span', 'name', s.label)));
-      li.dataset.index = s.index; li.dataset.label = s.label;
+      li.dataset.index = s.index; li.dataset.label = s.label; li.dataset.n = i + 1; // its stage marker's number
       return li;
     }));
   }
