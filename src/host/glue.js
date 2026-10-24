@@ -280,6 +280,7 @@ function resync(pid) {
 function leave(pid) {
   game.removePlayer(pid);
   players.delete(pid);
+  margins.setNear(pid, null); // its stop goes dark
 }
 
 const readout = (pid, text) => tell(pid, { t: 'readout', text });
@@ -318,6 +319,7 @@ game.onHotspot((e) => {
   if (e?.type === 'near') {
     const p = players.get(e.pid);
     if (p) p.near = label;
+    margins.setNear(e.pid, e.object, e.pid === 0 ? 'var(--slot-keyboard)' : p?.color);
     tell(e.pid, { t: 'near', label });
   } else if (e?.type === 'poke') {
     audio.play('poke', { label, kind: e.kind, sound_prompt: e.sound_prompt });
@@ -390,6 +392,8 @@ const h = (tag, cls, ...kids) => { const el = document.createElement(tag); if (c
 const dot = (color, cls = '') => { const d = h('span', 'dot ' + cls); if (color) d.style.background = color; return d; };
 const short = (u) => u.replace(/^\w+:\/\//, '').replace(/\/$/, '');
 
+// A ticket: the code, its caption, and for the join code a stub (what it admits, the address, the data-use small
+// print). artwork.js's boarding screen copies the canvas, the caption's first text and .url, so those stay put.
 function qrFigure(text, caption, url) {
   const qr = qrcode(0, 'L'); qr.addData(text); qr.make();
   const n = qr.getModuleCount(), px = qrScale(n), size = (n + 8) * px;
@@ -399,7 +403,8 @@ function qrFigure(text, caption, url) {
   g.fillStyle = css.getPropertyValue('--paper').trim(); g.fillRect(0, 0, size, size);
   g.fillStyle = css.getPropertyValue('--ink').trim();
   for (let r = 0; r < n; r++) for (let k = 0; k < n; k++) if (qr.isDark(r, k)) g.fillRect((k + 4) * px, (r + 4) * px, px, px);
-  return h('figure', '', c, h('figcaption', '', caption, ...(url ? [h('span', 'url', url)] : [])));
+  const stub = url ? [h('span', 'stub', `Party ticket · up to ${MAX_PLAYERS} phones`, h('span', 'url', url), h('small', 'fine', margins.NOTICE))] : [];
+  return h('figure', '', c, h('figcaption', '', caption, ...stub));
 }
 
 function drawQr() {
@@ -408,8 +413,8 @@ function drawQr() {
   joinUrl = hub && !(token && String(hub.joinUrl).includes(token)) ? joinWithRoom(hub.joinUrl, hub.room) : '';
   const wifi = fallback && hub?.wifi?.ssid ? hub.wifi : null;
   els.qr?.replaceChildren(...(!joinUrl ? [] : wifi
-    ? [qrFigure(wifiPayload(wifi), '1  Join the Toy Theatre Wi-Fi'), qrFigure(joinUrl, '2  Scan to walk into the picture', short(joinUrl))]
-    : [qrFigure(joinUrl, 'Scan to walk into the picture', short(joinUrl))]));
+    ? [qrFigure(wifiPayload(wifi), '1  Join the Toy Theatre Wi-Fi'), qrFigure(joinUrl, '2  Scan to board', short(joinUrl))]
+    : [qrFigure(joinUrl, 'Scan to board', short(joinUrl))]));
 }
 
 const dur = (s) => Number.isFinite(s) ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m` : '—';
@@ -422,10 +427,19 @@ function render() {
     els.resting.replaceChildren(h('p', 'rest', 'This exhibit is resting. Please use the keyboard.', ...(stopped ? [h('small', '', stopped)] : [])));
   }
 
-  const row = (color, name, away) => h('li', away ? 'away' : '', dot(color), h('span', '', name, away ? ' (away)' : ''));
-  els.roster?.replaceChildren(h('h2', '', 'In the picture'), h('ul', '',
-    row('var(--slot-keyboard)', 'Keyboard', false),
-    ...[...players.values()].map((p) => row(p.color, p.name, p.away))));
+  // On board: a seat per figure, the keyboard's first (artwork.js's boarding screen reads these rows: the dot's colour,
+  // the last span's name, .away), then the seats still open.
+  const seat = (color, name, away, cls = '') => {
+    const li = h('li', `${cls} ${away ? 'away' : ''}`.trim(), dot(color), h('span', '', name, away ? ' (away)' : ''));
+    li.style.setProperty('--seat', color);
+    return li;
+  };
+  const free = MAX_PLAYERS - players.size;
+  els.roster?.replaceChildren(h('h2', '', 'On board'), h('ul', '',
+    seat('var(--slot-keyboard)', 'Keyboard', false, 'kbd'),
+    ...[...players.values()].map((p) => seat(p.color, p.name, p.away))),
+  ...(resting ? [] : [h('p', 'open', free > 0 ? `${free} ${free === 1 ? 'seat' : 'seats'} open` : 'Every seat taken')])); // resting: no one can board
+  document.getElementById('tv')?.classList.toggle('hud-open', hudOpen); // the operator's cards (host.css, margins.css)
 
   const where = !hub ? '—' : hub.region === 'local' ? 'local' : `vercel ${hub.region}${hub.bus === 'redis' ? '' : ' · no redis'}`;
   const inside = [...players.values()].filter((p) => p.inside).length;

@@ -1,5 +1,5 @@
-// Formatting helpers from src/host/margins.js: chip and saved-badge text, safe image URLs, times, the wall label,
-// the platform lines and the Learning entries. margins.js imports CSS and JSON and touches the DOM, so this loads
+// Formatting helpers from src/host/margins.js: chip and saved-badge text, safe image URLs, times, the station sign,
+// the stops' crops, the platform lines and the Learning entries. margins.js imports CSS and JSON and touches the DOM, so this loads
 // only its pure block (between the pure:start and pure:end markers) as a module, as tests/glue.test.js does.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,31 +46,52 @@ test('clock and stamp: local HH:MM; ISO stamps get the weekday, free text stays'
   assert.equal(m.stamp(undefined), '');
 });
 
-test('labelOf: guesses, chip, credit, legend and thumbnail from a scene', () => {
+test('labelOf: guesses, chip and thumbnail from a scene', () => {
   const scene = {
     id: 'sample-turner', edited: true, credit: 'J. M. W. Turner, 1844. The National Gallery, London',
     title_guess: 'Rain, Steam and\nSpeed', artist_guess: 'J. M. W. Turner', image_url: '/assets/turner-1920.jpg',
-    objects: [{ label: 'locomotive', kind: 'vehicle' }, { label: '', kind: 'sky' }, null, { label: 'hare', kind: 'animal' }],
   };
   assert.deepEqual(m.labelOf(scene), {
     artist: 'J. M. W. Turner', title: 'Rain, Steam and Speed', chip: 'AI draft, hand-corrected (sample)',
-    credit: 'J. M. W. Turner, 1844. The National Gallery, London',
-    legend: [{ label: 'locomotive', kind: 'vehicle' }, { label: 'hare', kind: 'animal' }],
     thumb: '/assets/turner-1920.jpg',
   });
   assert.equal(m.labelOf(null), null);
 });
 
-test('labelOf: unknown guesses read as unknown, bad fields are dropped, legend capped at 8', () => {
-  const objects = Array.from({ length: 12 }, (_, i) => ({ label: `thing ${i}`, kind: 'object' }));
-  const l = m.labelOf({ title_guess: 'unknown', artist_guess: 42, credit: null, image_url: 'javascript:x', objects });
+test('labelOf: unknown guesses read as unknown, bad fields are dropped', () => {
+  const l = m.labelOf({ title_guess: 'unknown', artist_guess: 42, image_url: 'javascript:x' });
   assert.equal(l.title, 'Title unknown');
   assert.equal(l.artist, 'Artist unknown');
   assert.equal(l.chip, 'AI draft, not a museum record');
-  assert.equal(l.credit, '');
   assert.equal(l.thumb, '');
-  assert.equal(l.legend.length, 8);
-  assert.deepEqual(m.labelOf({ objects: 'nope' }).legend, []);
+});
+
+// The crop as the rectangle of the picture it shows, back from CSS background-size and -position (fractions 0..1).
+function shown(c) {
+  const [sw, sh] = c.size.split(' ').map((p) => 100 / parseFloat(p)), [px, py] = c.position.split(' ').map((p) => parseFloat(p) / 100);
+  return { x: px * (1 - sw), y: py * (1 - sh), w: sw, h: sh };
+}
+const near = (a, b) => Math.abs(a - b) < 1e-3;
+
+test('cropOf: a 4:3 window round the box, at the picture aspect, inside the picture', () => {
+  for (const aspect of [16 / 9, 4 / 3, 1, 3 / 4]) {
+    for (const box of [[572, 543, 695, 700], [778, 686, 808, 712], [0, 0, 1000, 510], [500, 552, 1000, 1000], [0, 0, 1000, 1000], [0, 900, 40, 1000]]) {
+      const r = shown(m.cropOf(box, aspect));
+      assert.ok(near(r.w * aspect / r.h, 4 / 3), `4:3 on screen: ${box} at ${aspect}`);
+      assert.ok(r.x >= -1e-3 && r.y >= -1e-3 && r.x + r.w <= 1 + 1e-3 && r.y + r.h <= 1 + 1e-3, `inside: ${box} at ${aspect}`);
+      // the box's centre is in view
+      const cx = (box[0] + box[2]) / 2000, cy = (box[1] + box[3]) / 2000;
+      assert.ok(cx >= r.x - 1e-3 && cx <= r.x + r.w + 1e-3 && cy >= r.y - 1e-3 && cy <= r.y + r.h + 1e-3, `centre: ${box} at ${aspect}`);
+    }
+  }
+  const loco = shown(m.cropOf([572, 543, 695, 700], 4 / 3)); // a small box is framed with a little room round it
+  assert.ok(loco.x < 0.572 && loco.x + loco.w > 0.695 && loco.y < 0.543 && loco.y + loco.h > 0.7);
+  assert.deepEqual(m.cropOf([700, 543, 572, 695], 4 / 3), m.cropOf([572, 543, 700, 695], 4 / 3), 'corners in any order');
+});
+
+test('cropOf: no box, no aspect, no crop', () => {
+  for (const [box, aspect] of [[null, 1], [[1, 2, 3], 1], [[0, 0, 0, 10], 1], [[0, 0, 10, 10], 0], [[0, 0, 10, 10], NaN], [[0, 0, 'a', 10], 1], [[0, 0, 10, 10], Infinity]])
+    assert.equal(m.cropOf(box, aspect), null, `${box} at ${aspect}`);
 });
 
 test('platformLines: one line per platform, in order', () => {

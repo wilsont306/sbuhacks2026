@@ -1,8 +1,12 @@
-// The TV's margins and overlays (README contract F): the AI wall label (#label) and the object legend in the left
-// margin; the source thumbnail, data-use notice, saved badge and sound flash in the right margin; the platform panel
-// over the stage bottom (the W 'network' layer); the L Learning overlay; X hides the AI labels. glue.js calls init.
-// Every string from a scene reaches the page through textContent only.
+// The TV's margins and overlays (README contract F): in the left margin the line, an enamel station sign for the AI's
+// guess at the picture (#label) over its stops (#legend: every object a figure walks to, in walk order, each with a
+// crop of the picture; the stops figures stand at are lit, and a description opens in its stop); in the right margin
+// the sound flash, the data-use notice while no join ticket shows it, and behind H the source thumbnail and saved
+// badge; the platform panel over the stage bottom (the W 'network' layer); the L Learning overlay; X hides the AI
+// labels. glue.js calls init and tells it who stands where. Every string from a scene reaches the page through
+// textContent only.
 import learning from '../shared/learning.json';
+import { objectHotspots, pathPoints } from './maskDepth.js';
 import './margins.css';
 
 /* pure:start (tests/margins.test.js imports this block on its own, so it must not use imports or globals) */
@@ -38,18 +42,16 @@ export function stamp(at) {
   return str(at, 40);
 }
 
-// What the left margin and the source block show for a scene; null when there is none.
+// What the station sign and the source block show for a scene; null when there is none. (The credit is the
+// original's, under O; the stops come from the scene's objects.)
 export function labelOf(scene) {
   if (!scene || typeof scene !== 'object') return null;
   // the validator writes 'unknown' when Gemini gave no guess
   const guess = (v, what) => { const s = str(v, 120); return s && s.toLowerCase() !== 'unknown' ? s : `${what} unknown`; };
-  const objects = Array.isArray(scene.objects) ? scene.objects.slice(0, 8) : [];
   return {
     artist: guess(scene.artist_guess, 'Artist'),
     title: guess(scene.title_guess, 'Title'),
     chip: chipText(scene),
-    credit: str(scene.credit, 300),
-    legend: objects.map((o) => ({ label: str(o && o.label, 40), kind: str(o && o.kind, 20) })).filter((o) => o.label),
     thumb: safeUrl(scene.image_url),
   };
 }
@@ -72,6 +74,27 @@ export function platformLines({ hub, scene, saved, id, audio, depth, models } = 
   ];
 }
 
+// A stop's description: the object's label and its description, cleaned for display.
+export const describeCard = (label, text) => ({ label: str(label, 40) || 'Object', text: str(text, 240) });
+
+// A stop's picture: the part of the painting around an object's box ([x0, y0, x1, y1], 0..1000 image space), with a
+// little room round it and widened to a 4:3 window at the picture's aspect (width / height), as CSS background-size
+// and background-position for the whole picture. Never stretched: a box too big for the picture zooms in instead.
+// null without a usable box or aspect.
+export function cropOf(box, aspect) {
+  if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite) || !(aspect > 0 && Number.isFinite(aspect))) return null;
+  const x0 = Math.max(0, Math.min(box[0], box[2])), x1 = Math.min(1000, Math.max(box[0], box[2]));
+  const y0 = Math.max(0, Math.min(box[1], box[3])), y1 = Math.min(1000, Math.max(box[1], box[3]));
+  let w = (x1 - x0) / 1000 * 1.12, h = (y1 - y0) / 1000 * 1.12; // fractions of the picture's width and height
+  if (!(w > 0 && h > 0)) return null;
+  if (w * aspect / h < 4 / 3) w = h * 4 / 3 / aspect; else h = w * aspect * 3 / 4;
+  if (w > 1) { h /= w; w = 1; }
+  if (h > 1) { w /= h; h = 1; }
+  const at = (c, f) => (f < 1 ? Math.min(Math.max(c - f / 2, 0), 1 - f) / (1 - f) : 0); // the offset as a percentage's fraction
+  const pct = (x) => `${Math.round(x * 1e4) / 100}%`;
+  return { size: `${pct(1 / w)} ${pct(1 / h)}`, position: `${pct(at((x0 + x1) / 2000, w))} ${pct(at((y0 + y1) / 2000, h))}` };
+}
+
 // learning.json entries with a who and a text, cleaned for display, in file order.
 export function learningEntries(json) {
   const list = json && Array.isArray(json.entries) ? json.entries : [];
@@ -80,12 +103,15 @@ export function learningEntries(json) {
 }
 /* pure:end */
 
-const FLASH_MS = 2000, PLATFORM_TICK_MS = 1000;
+const FLASH_MS = 2000, PLATFORM_TICK_MS = 1000, DESCRIBE_MS = 10000;
 
 const h = (tag, cls, ...kids) => { const el = document.createElement(tag); if (cls) el.className = cls; el.append(...kids); return el; };
 
 let els = null, scene = null, saved = 'unsaved', projectId = '', hub = null, audioStats = () => ({}), depthStats = () => ({}), modelStats = () => ({});
-let flashT = 0, platformT = 0;
+let flashT = 0, platformT = 0, describeT = 0;
+const riders = new Map(); // pid -> {index, color}: the stop each figure stands at (glue.js's setNear)
+let routeScene; // the scene the stops were built for
+let staged = ''; // the picture on stage (artwork.js's setScene image), else the scene's own image_url
 
 export function init(opts = {}) {
   if (typeof opts.audioStats === 'function') audioStats = opts.audioStats;
@@ -98,18 +124,21 @@ export function init(opts = {}) {
   let label = document.getElementById('label');
   if (!label) { label = h('div', 'tombstone'); label.id = 'label'; left.prepend(label); }
 
-  const legend = h('section', ''); legend.id = 'legend'; legend.hidden = true;
-  const roster = document.getElementById('roster');
-  left.insertBefore(legend, roster && roster.parentNode === left ? roster : null);
+  const route = h('ol', 'route');
+  const legend = h('section', '', h('h2', '', 'Stops on this line'), route); legend.id = 'legend'; legend.hidden = true;
+  legend.setAttribute('aria-live', 'polite'); // a description opening under its stop is read out
+  left.append(legend);
 
+  // The flash is for everyone; the thumbnail and badge are the operator's (H). The data-use notice rides on the
+  // join ticket (glue.js); this copy shows while there is no ticket, since U and a dropped file still send pictures.
   const flashEl = h('p', 'flash'); flashEl.setAttribute('role', 'status'); flashEl.hidden = true;
   const thumb = h('img', 'thumb'); thumb.alt = 'The source picture'; thumb.hidden = true;
   thumb.addEventListener('error', () => { thumb.hidden = true; });
+  thumb.addEventListener('load', paintCrops); // the stops' crops need the picture's aspect
   const badge = h('p', 'badge'); badge.hidden = true;
   const source = h('section', '', flashEl, thumb, badge, h('p', 'notice', NOTICE));
   source.id = 'source'; source.setAttribute('aria-label', 'Source picture');
-  const resting = document.getElementById('resting');
-  right.insertBefore(source, resting && resting.parentNode === right ? resting : null);
+  right.prepend(source);
 
   const platformList = h('dl', '');
   const platforms = h('section', '', platformList); platforms.id = 'platforms'; platforms.hidden = true;
@@ -117,7 +146,7 @@ export function init(opts = {}) {
   const learn = h('section', ''); learn.id = 'learning'; learn.hidden = true; learn.setAttribute('aria-label', 'Learning');
   stage.append(platforms, learn);
 
-  els = { tv, label, legend, flash: flashEl, thumb, badge, platforms, platformList, learning: learn };
+  els = { tv, label, legend, route, flash: flashEl, thumb, badge, platforms, platformList, learning: learn };
   renderLearning();
   renderScene();
 
@@ -134,7 +163,15 @@ export function setScene(s, opts = {}) {
   scene = s && typeof s === 'object' ? s : null;
   projectId = scene ? str(scene.id, 128) : '';
   saved = opts && opts.saved ? opts.saved : scene && scene.source === 'sample' ? 'sample' : 'unsaved';
-  renderScene();
+  staged = scene && opts ? safeUrl(opts.image) : '';
+  renderScene(); // a new route: the last scene's lit stops and description go with it
+}
+
+// The stop a figure stands at (an object index; null when it stands at none), lit in that rider's colour.
+export function setNear(pid, index, color) {
+  if (Number.isInteger(index)) riders.set(pid, { index, color: typeof color === 'string' ? color : '' });
+  else riders.delete(pid);
+  paintNear();
 }
 
 export function setSaved(state, id) {
@@ -166,6 +203,19 @@ export function flash(text) {
   flashT = setTimeout(() => { els.flash.hidden = true; }, FLASH_MS);
 }
 
+// The object a figure asked about (scene.js's object index, else its label): its description opens under its stop
+// for 10 s; the latest replaces the previous.
+export function showDescription(label, text, index) {
+  if (!els) return;
+  const c = describeCard(label, text), stops = [...els.route.children];
+  const stop = stops.find((li) => Number(li.dataset.index) === index) || stops.find((li) => li.dataset.label === c.label);
+  clearTimeout(describeT);
+  for (const li of stops) li.querySelector('.say')?.remove();
+  if (!stop || !c.text) return;
+  stop.append(h('p', 'say', h('b', '', 'AI: '), c.text));
+  describeT = setTimeout(() => stop.querySelector('.say')?.remove(), DESCRIBE_MS);
+}
+
 export function toggleLearning() {
   if (!els) return false;
   els.learning.hidden = !els.learning.hidden;
@@ -182,23 +232,56 @@ function renderScene() {
   const m = labelOf(scene);
   // the margins clamp long lines with an ellipsis; the title attribute keeps the full text
   const full = (el) => { el.title = el.textContent; return el; };
+  // The sign: the title (a subtitle after a dash or colon goes on its own smaller line), the artist, whose guess.
+  const [main, ...rest] = m ? m.title.split(/\s+[–—-]\s+|:\s+/) : [], sub = rest.join(' – ');
   els.label.replaceChildren(...(m ? [
-    full(h('p', 'artist ai', m.artist)), full(h('p', 'title ai', m.title)), h('p', 'chip ai', m.chip),
-    h('p', 'labels-note', 'AI labels hidden'),
-    ...(m.credit ? [full(h('p', 'credit', m.credit))] : []),
+    full(h('p', 'title ai', main)), ...(sub ? [full(h('p', 'sub ai', sub))] : []), full(h('p', 'artist ai', m.artist)),
+    h('p', 'chip ai', m.chip), h('p', 'labels-note', 'AI labels hidden'),
   ] : []));
-  els.legend.hidden = !m || !m.legend.length;
-  els.legend.replaceChildren(h('h2', '', 'AI guesses'),
-    h('ul', '', ...(m ? m.legend : []).map((o) => full(h('li', '', h('span', 'name', o.label), ' ', h('span', 'kind', `(${o.kind})`))))));
+  // The stops, in the order the figures reach them (scene.js's stops: the same objects, the same labels). Built once
+  // per scene, so a saved badge changing never closes an open description.
+  if (routeScene !== scene) {
+    routeScene = scene;
+    const stops = scene ? objectHotspots(scene, pathPoints(scene, () => 0)) : [];
+    els.legend.hidden = !stops.length;
+    els.route.replaceChildren(...stops.map((s) => {
+      const li = h('li', '', h('span', 'thumb'), full(h('span', 'name', s.label)));
+      li.dataset.index = s.index; li.dataset.label = s.label;
+      return li;
+    }));
+  }
 
-  const src = m ? m.thumb : '';
+  const src = m ? staged || m.thumb : '';
   if (!src) els.thumb.removeAttribute('src');
   else if (els.thumb.getAttribute('src') !== src) els.thumb.src = src;
   els.thumb.hidden = !src;
+  paintCrops(); paintNear();
   els.badge.hidden = !m;
   els.badge.textContent = savedText(saved);
   els.badge.classList.toggle('ok', saved === 'saved');
   renderPlatforms();
+}
+
+// Each stop's crop of the picture, once the picture (the H thumbnail: the same image as the stage's) has loaded.
+function paintCrops() {
+  const img = els.thumb, src = img.getAttribute('src'), aspect = img.naturalWidth / img.naturalHeight;
+  if (!src || !img.complete || !(aspect > 0)) return;
+  for (const li of els.route.children) {
+    const o = scene && scene.objects[Number(li.dataset.index)], c = o && cropOf(o.box, aspect), t = li.firstChild;
+    t.style.backgroundImage = c ? `url(${JSON.stringify(src)})` : '';
+    t.style.backgroundSize = c ? c.size : '';
+    t.style.backgroundPosition = c ? c.position : '';
+  }
+}
+
+// Lights the stops figures stand at, each in its rider's colour (the first rider's, when two share a stop).
+function paintNear() {
+  if (!els) return;
+  for (const li of els.route.children) {
+    const r = [...riders.values()].find((x) => x.index === Number(li.dataset.index));
+    li.classList.toggle('here', !!r);
+    if (r && r.color) li.style.setProperty('--rider', r.color); else li.style.removeProperty('--rider');
+  }
 }
 
 function renderPlatforms() {

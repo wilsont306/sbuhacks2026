@@ -6,12 +6,18 @@
    as a die-cut flat at its depth guess, moving the way it moves on the stage. Brass marks the focused item and the
    primary action. Tokens only; TV type 28 px, nothing under 20 px. */
 .art-gallery, .art-detail, .art-board {
-  position: absolute; inset: 0; color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
+  /* The letterbox round the frame, in frame px (fit.js's visible area over the frame's scale): these screens reach
+     over it to the window's edges, so nothing of the stage or the page shows beside them. Their content stays
+     inside the 1920 x 1080 frame. */
+  --bleed-x: max(0px, (var(--vis-w, 100vw) / var(--fit, 1) - 1920px) / 2);
+  --bleed-y: max(0px, (var(--vis-h, 100vh) / var(--fit, 1) - 1080px) / 2);
+  position: absolute; inset: calc(-1 * var(--bleed-y)) calc(-1 * var(--bleed-x));
+  color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
   animation: tt-fade var(--fade) ease-out;
 }
 .art-gallery {
-  --edge: 96px; /* the frame's side margin; trains and track run out under it */
-  z-index: 7; display: flex; flex-direction: column; padding: 32px var(--edge) 0; overflow: hidden;
+  --edge: calc(96px + var(--bleed-x)); /* the frame's side margin, plus the letterbox; trains and track run out under it */
+  z-index: 7; display: flex; flex-direction: column; padding: calc(32px + var(--bleed-y)) var(--edge) var(--bleed-y); overflow: hidden;
   background: var(--rail-night); /* flat: the trains and their tracks carry the scene, not a gradient */
 }
 .art-gallery[hidden], .art-detail[hidden], .art-board[hidden], .art-drop[hidden], .art-detail-tip[hidden] { display: none; }
@@ -24,7 +30,7 @@
 .art-sky .bite { fill: var(--rail-night); }
 .art-sky .star { fill: var(--frame-ink); opacity: .35; animation: art-star 3.2s ease-in-out infinite alternate; }
 .art-scenery {
-  position: absolute; z-index: -1; left: calc(-1 * var(--edge)); bottom: 17px; width: 1920px; height: 200px;
+  position: absolute; z-index: -1; left: calc(-1 * var(--edge)); bottom: 17px; width: calc(1920px + 2 * var(--bleed-x)); height: 200px;
   overflow: hidden; pointer-events: none;
 }
 .art-scenery .hills { fill: color-mix(in srgb, var(--rail-dusk) 70%, var(--rail-night)); }
@@ -366,7 +372,8 @@
    for panels and cards; pills for buttons. */
 .art-board {
   --r: 16px;
-  z-index: 11; display: grid; grid-template-columns: 560px 1fr; gap: 96px; padding: 96px;
+  z-index: 11; display: grid; grid-template-columns: 560px 1fr; gap: 96px;
+  padding: calc(96px + var(--bleed-y)) calc(96px + var(--bleed-x));
   background: var(--rail-night);
 }
 /* The party ticket: printed card stock with a livery rule inset from its edge, the code in the middle, and a stub

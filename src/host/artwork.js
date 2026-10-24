@@ -55,14 +55,15 @@ function onStage(my, fn) {
 
 // Plays a validated scene: stage, margins and sound preparation. False when a newer load took over or no image loads.
 async function present(my, scene, image, saved, fallback) {
+  let shown = image;
   try { await onStage(my, () => game.loadScene(scene, { image })); } catch (err) {
     if (err === STALE || !fallback || fallback === image) return false;
-    try { await onStage(my, () => game.loadScene(scene, { image: fallback })); } catch { return false; }
+    try { await onStage(my, () => game.loadScene(scene, { image: fallback })); shown = fallback; } catch { return false; }
   }
   if (my !== gen) return false;
   state = { scene, id: scene.id || null, saved };
   status(null);
-  tell(margins, 'setScene', scene, { saved });
+  tell(margins, 'setScene', scene, { saved, image: shown }); // the stops crop the picture actually on stage
   tell(audio, 'prepare', scene);
   closeGallery();
   return true;
@@ -313,7 +314,8 @@ const POLES = Array.from({ length: 6 }, (_, k) => {
   return `<rect x="${x - 3}" y="60" width="6" height="140"/><rect x="${x - 22}" y="66" width="44" height="5"/>`
     + `<path class="wire" d="M${x - 16} 70 Q${x + 144} 94 ${x + 304} 70 M${x + 16} 70 Q${x + 176} 94 ${x + 336} 70"/>`;
 }).join('');
-const SCENERY = `<svg class="art-scenery" viewBox="0 0 1920 200" aria-hidden="true">
+// Slice: a strip wider than the frame (the gallery reaching over a letterbox) scales up from the rail, never leaves a gap.
+const SCENERY = `<svg class="art-scenery" viewBox="0 0 1920 200" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
   <g class="far"><path class="hills" d="${HILLS}"/><path class="hills" transform="translate(1920 0)" d="${HILLS}"/></g>
   <g class="near"><g class="poles">${POLES}</g><g class="poles" transform="translate(1920 0)">${POLES}</g></g>
 </svg>`;
