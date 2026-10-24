@@ -249,6 +249,16 @@ describe('programmatic access token', () => {
     assert.deepEqual([body.warehouse, body.database, body.schema, body.role], ['LB_WH', 'LB_DB', 'APP', 'LB_APP']);
   });
 
+  it('strips quotes a pasted env value kept, and a quoted blank counts as no PAT', async () => {
+    for (const quoted of [`"${PAT}"`, `'${PAT}'`, ` "${PAT}" \n`]) {
+      const f = fakeFetch(result(['N'], [['1']]));
+      await sql('SELECT 1', [], opts(f, { env: { ...PAT_ENV, SNOWFLAKE_PAT: quoted } }));
+      assert.equal(f.calls[0].init.headers.Authorization, `Bearer ${PAT}`, quoted);
+    }
+    const { SNOWFLAKE_USER: _u, SNOWFLAKE_PRIVATE_KEY: _k, ...base } = ENV;
+    assert.equal(configured({ ...base, SNOWFLAKE_PAT: '""' }), false);
+  });
+
   it('wins over a key pair, which is then never read, on the poll too', async () => {
     const f = fakeFetch(pending(), result(['N'], [['1']]));
     await sql('SELECT 1', [], opts(f, { env: { ...ENV, SNOWFLAKE_PRIVATE_KEY: 'not a key', SNOWFLAKE_PAT: PAT } }));
