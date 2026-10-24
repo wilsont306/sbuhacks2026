@@ -1,14 +1,23 @@
 #!/bin/sh
-# Secret gate: blocks a commit that stages a .env file (except .env.example) or adds a likely secret.
+# Secret gate: blocks a commit that stages a .env file (except .env.example) or adds a likely secret:
+# a secret key set to a value, a Redis URL with a password in it, or a key, token or PEM private key.
 # Enable once per clone: git config core.hooksPath .githooks
 set -f # the patterns and paths below must never glob
 nl='
 '
-# A key's value must start with a letter or digit and not be a placeholder, so the empty lines and
-# HOST_TOKEN=change-me in .env.example, and doc placeholders (=…, =<token>, =$VAR, =%VAR%), pass.
-keys='(HOST_TOKEN|GEMINI_API_KEY|SNOWFLAKE_PASSWORD|ELEVENLABS_API_KEY)=["'\'']?'
+# A key's value, and a Redis URL's password, must start with a letter or digit and not be a placeholder,
+# so the empty lines and HOST_TOKEN=change-me in .env.example, and doc placeholders (=…, =<token>, =$VAR,
+# =%VAR%, rediss://default:…@host), pass. KV_URL also covers names ending in it.
+names='HOST_TOKEN|GEMINI_API_KEY|SNOWFLAKE_PASSWORD|SNOWFLAKE_PRIVATE_KEY|ELEVENLABS_API_KEY|REDIS_URL|KV_URL|UPSTASH_KV_URL|BLOB_READ_WRITE_TOKEN'
+keys="($names)=[\"']?"
+redis='rediss?://[^ :]*:'
+placeholder='(change-?me|your[-_])'
+keylist=$(printf '%s\n' "$names" | sed 's/|/, /g')
+# Secrets wherever they appear: Google (Gemini) key, sk- key, ElevenLabs sk_ key, Vercel Blob token, PEM private key.
 pats='AIza[0-9A-Za-z_-]{35}
 sk-[A-Za-z0-9]{20,}
+sk_[0-9a-f]{32,}
+vercel_blob_rw_[A-Za-z0-9_]+
 -----BEGIN [A-Z ]*PRIVATE KEY-----'
 status=0
 files=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -20,8 +29,12 @@ for f in $files; do
   esac
   added=$(git diff --cached -U0 --no-color --no-ext-diff -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (b/|/dev/null)')
   [ -n "$added" ] || continue
-  if printf '%s\n' "$added" | grep -E -e "${keys}[A-Za-z0-9]" | grep -qvE -e "${keys}(change-?me|your[-_])"; then
-    echo "pre-commit: $f sets HOST_TOKEN, GEMINI_API_KEY, SNOWFLAKE_PASSWORD or ELEVENLABS_API_KEY to a value" >&2
+  if printf '%s\n' "$added" | grep -E -e "${keys}[A-Za-z0-9]" | grep -qvE -e "${keys}${placeholder}"; then
+    echo "pre-commit: $f sets one of $keylist to a value" >&2
+    status=1
+  fi
+  if printf '%s\n' "$added" | grep -E -e "${redis}[A-Za-z0-9][^@ ]*@" | grep -qvE -e "${redis}${placeholder}"; then
+    echo "pre-commit: $f adds a Redis URL with a password (redis[s]://user:password@host)" >&2
     status=1
   fi
   for p in $pats; do

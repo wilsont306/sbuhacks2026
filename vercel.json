@@ -2,12 +2,59 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/host", "destination": "/host.html" },
-    { "source": "/", "destination": "/join.html" }
+    {
+      "source": "/host",
+      "destination": "/host.html"
+    },
+    {
+      "source": "/",
+      "destination": "/join.html"
+    }
   ],
   "headers": [
-    { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
-    { "source": "/host", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
-    { "source": "/(host|join).html", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
-  ]
+    {
+      "source": "/",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/host",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/(host|join).html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "api/ws.js": {
+      "maxDuration": 300
+    },
+    "api/interpret.js": {
+      "maxDuration": 30
+    },
+    "api/sfx.js": {
+      "maxDuration": 30
+    },
+    "api/projects.js": {
+      "maxDuration": 15
+    },
+    "api/check.js": {
+      "maxDuration": 15
+    }
+  }
 }

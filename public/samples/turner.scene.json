@@ -1,0 +1,195 @@
+{
+ "id": "sample-turner",
+ "source": "sample",
+ "edited": true,
+ "credit": "J. M. W. Turner, 1844. The National Gallery, London. Public domain (Wikimedia Commons).",
+ "image_url": "/assets/turner-1920.jpg",
+ "scene_url": "",
+ "model": "hand-corrected",
+ "generated_at": "2026-10-24T09:00:00.000Z",
+ "ai_draft": true,
+ "title_guess": "Rain, Steam, and Speed – The Great Western Railway",
+ "artist_guess": "J. M. W. Turner",
+ "palette": [
+  "#d9cfae",
+  "#b8a26f",
+  "#7a4a2a",
+  "#9fb0c2",
+  "#3a2a22"
+ ],
+ "ground_path": [
+  [50, 890],
+  [99, 873],
+  [154, 851],
+  [212, 825],
+  [269, 796],
+  [321, 765],
+  [370, 732],
+  [420, 700]
+ ],
+ "objects": [
+  {
+   "label": "Steam locomotive",
+   "kind": "vehicle",
+   "box": [572, 543, 695, 700],
+   "mask": [
+    [575, 550],
+    [635, 585],
+    [655, 600],
+    [657, 545],
+    [667, 543],
+    [668, 600],
+    [688, 605],
+    [695, 650],
+    [692, 700],
+    [640, 700],
+    [630, 672],
+    [605, 640],
+    [585, 605],
+    [572, 568]
+   ],
+   "depth": 0.22,
+   "colour": "#3a2a22",
+   "motion": "drift",
+   "sound_prompt": "Steam locomotive chuffing hard across a viaduct, whistle in the rain"
+  },
+  {
+   "label": "Hare on the track",
+   "kind": "animal",
+   "box": [778, 686, 808, 712],
+   "mask": [
+    [778, 702],
+    [784, 690],
+    [795, 686],
+    [806, 692],
+    [808, 706],
+    [790, 712]
+   ],
+   "depth": 0.2,
+   "colour": "#5a4632",
+   "motion": "bob",
+   "sound_prompt": "A hare darting across wet gravel, quick soft footfalls"
+  },
+  {
+   "label": "Rowing boat",
+   "kind": "vehicle",
+   "box": [126, 776, 150, 804],
+   "mask": [
+    [126, 795],
+    [133, 782],
+    [141, 776],
+    [148, 784],
+    [150, 798],
+    [137, 804]
+   ],
+   "depth": 0.12,
+   "colour": "#6b5a3a",
+   "motion": "bob",
+   "sound_prompt": "Oars dipping gently into a calm river, wooden boat creaking"
+  },
+  {
+   "label": "Railway viaduct",
+   "kind": "building",
+   "box": [500, 552, 1000, 1000],
+   "mask": [
+    [575, 552],
+    [640, 585],
+    [690, 600],
+    [700, 640],
+    [760, 665],
+    [880, 712],
+    [1000, 770],
+    [1000, 955],
+    [817, 1000],
+    [505, 1000],
+    [500, 800],
+    [530, 680],
+    [555, 600]
+   ],
+   "depth": 0.3,
+   "colour": "#7a4a2a",
+   "motion": "none",
+   "sound_prompt": "Train wheels rumbling over a brick viaduct, deep echoing clatter"
+  },
+  {
+   "label": "River Thames",
+   "kind": "water",
+   "box": [0, 668, 400, 1000],
+   "mask": [
+    [0, 668],
+    [175, 668],
+    [240, 720],
+    [300, 790],
+    [350, 870],
+    [385, 940],
+    [400, 1000],
+    [0, 1000]
+   ],
+   "depth": 0.15,
+   "colour": "#d8cfa8",
+   "motion": "sway",
+   "sound_prompt": "Rain falling steadily on a wide calm river"
+  },
+  {
+   "label": "Old road bridge",
+   "kind": "building",
+   "box": [0, 597, 185, 668],
+   "mask": [
+    [0, 602],
+    [85, 597],
+    [168, 600],
+    [185, 612],
+    [178, 666],
+    [0, 668]
+   ],
+   "depth": 0.6,
+   "colour": "#cdb88a",
+   "motion": "none",
+   "sound_prompt": "A distant horse and cart crossing an old stone bridge"
+  },
+  {
+   "label": "Steam and smoke",
+   "kind": "cloud",
+   "box": [495, 498, 675, 598],
+   "mask": [
+    [495, 512],
+    [540, 500],
+    [600, 498],
+    [650, 505],
+    [675, 522],
+    [675, 538],
+    [658, 545],
+    [652, 598],
+    [635, 585],
+    [600, 562],
+    [560, 540],
+    [510, 528]
+   ],
+   "depth": 0.26,
+   "colour": "#8a8070",
+   "motion": "drift",
+   "sound_prompt": "Hissing steam bursting from a locomotive chimney, soft whoosh"
+  },
+  {
+   "label": "Rain-swept sky",
+   "kind": "sky",
+   "box": [0, 0, 1000, 510],
+   "mask": [
+    [0, 0],
+    [1000, 0],
+    [1000, 470],
+    [860, 500],
+    [700, 510],
+    [560, 505],
+    [420, 478],
+    [260, 465],
+    [120, 470],
+    [0, 485]
+   ],
+   "depth": 1,
+   "colour": "#c9c6b0",
+   "motion": "drift",
+   "sound_prompt": "Heavy rain and gusting wind sweeping across open countryside"
+  }
+ ]
+}

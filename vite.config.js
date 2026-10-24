@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 
 // Two pages, one build: dist/host.html (the TV) and dist/join.html (any phone).
-// `npm run dev` proxies /ws to a hub on 8080 (`npm run hub`), so the pages work unchanged in dev.
+// `npm run dev` proxies /api/ws to a hub on 8080 (`npm run hub`), so the pages work unchanged in dev.
 export default defineConfig({
   build: {
     outDir: 'dist',
@@ -13,6 +13,6 @@ export default defineConfig({
   },
   server: {
     host: true,
-    proxy: { '/ws': { target: 'ws://localhost:8080', ws: true } },
+    proxy: { '/api/ws': { target: 'ws://localhost:8080', ws: true } },
   },
 });

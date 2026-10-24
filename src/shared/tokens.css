@@ -41,4 +41,23 @@
   --margin-w: 236px;          /* proscenium margins either side of the 1447 px stage */
   --tap: 44px;                /* minimum touch target */
   --radius: 6px;
+
+  /* polish, shared by the TV and the phone: 8 px spacing scale, soft radii, hairlines, shadows, focus, fades.
+     Alpha colours are 8-digit hex (not color-mix) so iOS 13 on the phone reads them. */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --radius-card: 8px;
+  --radius-pill: 999px;
+  --rule-frame: #e9eef747;    /* hairline on Prussian blue (frame-ink at 28%) */
+  --rule-ink: #1a181433;      /* hairline on cream (ink at 20%) */
+  --card-frame: #0b122259;    /* a card sunk into the Prussian ground (prussian-deep at 35%) */
+  --ink-soft: #57503f;        /* secondary text on cream: 6.7:1 */
+  --ok-ink: #2e6b3a;          /* "saved" on cream: 5.4:1 */
+  --shadow-card: 0 2px 10px #0b122259;
+  --shadow-lift: 0 14px 40px #0b12228c;
+  --vignette: #0b1222b3;      /* the stage's soft inner shadow */
+  --focus: var(--brass);      /* the focused item's ring */
+  --fade: 200ms;              /* every fade; off under prefers-reduced-motion and the TV's M */
 }

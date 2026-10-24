@@ -8,73 +8,18 @@
 <body>
   <div id="tv">
     <aside class="margin left" aria-label="Wall label">
-      <div class="tombstone">
-        <p class="artist">Joseph Mallord William Turner</p>
-        <p class="life">British, 1775–1851</p>
-        <p class="title">Rain, Steam, and Speed – The Great Western Railway</p>
-        <p class="date">Exhibited 1844</p>
-        <p class="coll">The National Gallery, London. NG538</p>
-      </div>
+      <div class="tombstone" id="label"></div>
       <section id="roster" aria-live="polite"></section>
     </aside>
 
-    <main id="stage" aria-label="The painting stage. Arrow keys walk the bank, Space looks at a brass plaque.">
+    <main id="stage" aria-label="The artwork stage. Arrow keys walk the figure, Space pokes the object it stands at.">
       <canvas id="gl" width="1447" height="1080"></canvas>
+      <p id="status" hidden aria-live="polite"></p>
       <p id="hint" aria-live="polite"></p>
       <p id="caption" hidden></p>
-
-      <section class="panel" id="panel-loco" hidden aria-live="polite">
-        <button class="close" type="button" aria-label="Close">×</button>
-        <h2></h2>
-        <div class="card"><p class="headline"></p><p class="lede"></p></div>
-        <figure class="drawing">
-          <canvas id="locoCanvas" width="552" height="270" role="img" aria-label="Crank-slider drawing: piston, connecting rod, crank pin and driving wheel"></canvas>
-          <figcaption class="titleblock">
-            <span class="tb-title"></span>
-            <span class="tb-scale">0<i class="bar" id="locoBar"></i><span></span></span>
-            <span class="tb-src">after the Firefly-class general arrangement</span>
-            <span class="tb-date">reconstruction, 2026</span>
-          </figcaption>
-        </figure>
-        <div class="row"><label for="mph">Regulator</label><span class="track"><input id="mph" type="range" min="0" max="60" step="1" value="30"><span class="ends" aria-hidden="true"><span>0 mph</span><span>60 mph</span></span></span><output id="mphOut" for="mph"></output></div>
-        <p class="readout" id="rpmOut"></p>
-        <p class="source"></p>
-        <p class="operator"></p>
-      </section>
-
-      <section class="panel" id="panel-bridge" hidden aria-live="polite">
-        <button class="close" type="button" aria-label="Close">×</button>
-        <h2></h2>
-        <div class="card"><p class="headline"></p><p class="lede"></p></div>
-        <figure class="drawing">
-          <canvas id="archCanvas" width="552" height="240" role="img" aria-label="Arch drawing with the line of thrust"></canvas>
-          <figcaption class="titleblock">
-            <span class="tb-title"></span>
-            <span class="tb-scale">0<i class="bar" id="archBar"></i><span></span></span>
-            <span class="tb-src">after I. K. Brunel, Maidenhead, 1838</span>
-            <span class="tb-date">reconstruction, 2026</span>
-          </figcaption>
-        </figure>
-        <div class="row"><label for="span">Span</label><input id="span" type="range" min="90" max="160" step="1" value="128"><output id="spanOut" for="span"></output></div>
-        <div class="row"><label for="rise">Rise</label><input id="rise" type="range" min="10" max="64" step="0.25" value="24.25"><output id="riseOut" for="rise"></output></div>
-        <p class="readout" id="archOut"></p>
-        <div class="row"><button class="btn" id="exportBtn" type="button">Export STL</button></div>
-        <p class="readout" id="stlOut"></p>
-        <p class="source"></p>
-        <p class="operator"></p>
-      </section>
-
-      <section class="panel" id="panel-hare" hidden aria-live="polite">
-        <button class="close" type="button" aria-label="Close">×</button>
-        <h2></h2>
-        <div class="card"><p class="headline"></p><p class="lede"></p></div>
-        <div id="hareView" role="img" aria-label="The hare: a crop of the untouched original"></div>
-        <p class="source"></p>
-        <p class="operator"></p>
-      </section>
-
-      <div id="original" hidden role="img" aria-label="The untouched painting">
-        <p class="tag">Original. The National Gallery, London, NG538.</p>
+      <div id="original" hidden>
+        <img alt="The original picture, untouched">
+        <p class="tag"></p>
       </div>
     </main>
 

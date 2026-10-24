@@ -1,5 +1,6 @@
-// Phone controller (M3, J1-J5). The host owns all game state; this page shows one screen per state
-// (connecting, lobby, walk, plaque, full, evicted) and sends pad, verb and panel input to the hub.
+// Phone controller (v2). The host owns all game state; this page shows one screen per state
+// (connecting, lobby, walk, full, evicted), sends pad and verb input to the hub, and hands the TV a photographed
+// artwork: the phone POSTs it to /api/interpret itself and sends only the returned scene URL.
 // No ES2020 syntax (?. ??): iOS 13 Safari must parse this.
 import '../shared/tokens.css';
 import '@fontsource/im-fell-english/latin-400.css';
@@ -8,15 +9,17 @@ import '@fontsource/libre-franklin/latin-600.css';
 import './join.css';
 import NoSleep from 'nosleep.js';
 import {
-  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, ORIGINAL_MS, CLOSE_EVICTED, CLOSE_REPLACED, MODES, PLAQUES,
-  PANEL_HZ, LEVER_MIN, LEVER_MAX, SPAN_MIN, SPAN_MAX, RISE_MIN, RISE_MAX_PHONE,
+  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, CLOSE_EVICTED, CLOSE_REPLACED,
+  ROLLOVER_MS, ROLLOVER_JITTER_MS, ROLL_WAIT_MS, HOST_SEEN_MS,
 } from '../shared/protocol.js';
+import { downscale } from '../shared/downscale.js';
 import slots from '../shared/slots.json';
-import cards from '../shared/cards.json';
 
 const $ = (id) => document.getElementById(id);
 const body = document.body, pad = $('pad'), verb = $('verb');
-const HUB = hubUrl(location, new URLSearchParams(location.search).get('hub'));
+const QS = new URLSearchParams(location.search);
+const HUB = hubUrl(location, QS.get('hub'));
+const ROLL = Number(QS.get('roll')) || 0; // ?roll=<ms> shortens the socket rollover, for testing it
 const BACKOFF = [500, 1000, 2000, 4000, 8000];
 const IN_GAP = 60; // ms between 'in' messages: ~16/s leaves room under the hub's 20/s for hbr and panel
 const DEAD = 0.075; // half of the 15%-wide dead zone at the pad centre, as a fraction of pad width
@@ -29,13 +32,13 @@ function setTok(t) {
 }
 
 let state = '', ws = null, joined = false, armed = false, helloSent = false, lastHello = null, stopped = false, named = false, mySlot;
-let retry = 0, retryT, bannerT = 0, hintT, dogT, fullT, toastT, splashT, origT, open = null;
+let retry = 0, retryT, bannerT = 0, hintT, dogT, fullT, toastT, splashT;
+let hostSeen = 0, rollT, rollWaitT; // hostSeen: last message that came from the host tab, not the relay
 
 // ---- screens ----
 function show(s) {
   if (s === state) return;
   if (s !== 'walk') zero();
-  if (s !== 'plaque') { open = null; dirty.length = 0; clearTimeout(panelT); }
   state = s;
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== s;
   clearInterval(fullT);
@@ -51,6 +54,7 @@ function lobby(free) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'swatch'; b.textContent = s.name;
     b.style.setProperty('--c', s.color);
+    b.style.setProperty('--on', onAccent(s.color)); // the card is filled with the colour, so its name needs ink or cream
     b.onclick = () => hello({ t: 'hello', token: null, slot: i });
     list.appendChild(b);
   }
@@ -58,94 +62,10 @@ function lobby(free) {
   show('lobby');
 }
 
-function plaque(k) {
-  if (state === 'plaque' && open === k) return; // a re-sent mode (grant, back, replayed join) keeps the panel; its mirror follows
-  const c = cards[k], sec = $('plaque');
-  $('pFig').textContent = c.fig; $('pTitle').textContent = c.title; $('pHead').textContent = c.headline;
-  $('pBody').textContent = c.body; $('pSource').textContent = c.source; $('pClosing').textContent = c.closing;
-  show('plaque');
-  open = k; dirty.length = 0; clearTimeout(panelT);
-  // Disabled until the first mirror sets them, so the phone never sends its own defaults.
-  for (const s of SL) if (s.p === k) { s.el.blur(); s.el.disabled = true; s.ptr = null; s.touch = false; put(s.out, '–'); }
-  $('ctlLoco').hidden = k !== 'loco'; $('ctlBridge').hidden = k !== 'bridge';
-  put($('rpm'), '–'); put($('verdict'), ''); put($('push'), '');
-  sec.scrollTop = sec.querySelector('article').scrollTop = 0;
-}
-
-// ---- plaque panels (J3): sliders follow the host's mirror readouts; the host checks ownership and clamps ----
-const put = (el, text) => { if (el.textContent !== text) el.textContent = text; }; // in place: live regions announce real changes only
-const ftin = (f) => { const i = Math.round(f * 12); return Math.floor(i / 12) + ' ft ' + (i % 12) + ' in'; };
-const SETTLE = 500; // ms after a release while mirrors of values sent mid-drag may still arrive
-const SL = [
-  ['lever', 'loco', 'mph', LEVER_MIN, LEVER_MAX, (v) => v + ' mph'],
-  ['span', 'bridge', 'span', SPAN_MIN, SPAN_MAX, (v) => v + ' ft'],
-  ['rise', 'bridge', 'rise', RISE_MIN, RISE_MAX_PHONE, ftin],
-].map(([kind, p, f, min, max, fmt]) => {
-  const el = $(kind), s = { kind, p, f, fmt, el, out: $(kind + 'V'), ptr: null, touch: false, settle: 0, sent: null };
-  el.min = min; el.max = max;
-  const moved = () => { const t = fmt(+el.value); el.setAttribute('aria-valuetext', t); put(s.out, t); mark(s); };
-  el.addEventListener('input', moved);
-  el.addEventListener('change', moved);
-  el.addEventListener('pointerdown', (e) => { s.ptr = e.pointerId; live(); });
-  for (const ev of ['touchstart', 'touchend', 'touchcancel']) el.addEventListener(ev, (e) => {
-    s.touch = e.targetTouches.length > 0;
-    if (!s.touch) s.settle = Date.now() + SETTLE;
-    live();
-  }, { passive: true });
-  el.addEventListener('blur', () => { s.settle = Date.now() + SETTLE; });
-  return s;
-});
-// A mouse may be released outside the slider, so pointer ends are caught on the document.
-for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, (e) => {
-  for (const s of SL) if (s.ptr === e.pointerId) { s.ptr = null; s.settle = Date.now() + SETTLE; }
-  live();
-}, true);
-const held = (s) => s.ptr !== null || s.touch || document.activeElement === s.el || dirty.indexOf(s) >= 0 || Date.now() < s.settle;
-// Readouts stay quiet while a finger drags; the mirror of the released value is announced once.
-function live() {
-  const busy = SL.some((s) => s.ptr !== null || s.touch);
-  for (const r of document.querySelectorAll('.ro')) r.setAttribute('aria-live', busy ? 'off' : 'polite');
-}
-
-// Latest values, at most PANEL_HZ messages a second across all sliders; the final value always goes, at most one gap late.
-const dirty = []; // sliders whose latest value is unsent, oldest first
-let lastPanel = 0, panelT;
-function mark(s) { if (dirty.indexOf(s) < 0) dirty.push(s); pushPanel(); }
-function pushPanel() {
-  clearTimeout(panelT);
-  while (dirty.length && +dirty[0].el.value === dirty[0].sent) dirty.shift();
-  if (!dirty.length) return;
-  const wait = lastPanel + 1000 / PANEL_HZ - Date.now();
-  if (wait > 0) { panelT = setTimeout(pushPanel, wait); return; }
-  const s = dirty[0], v = +s.el.value;
-  if (!joined || !send({ t: 'panel', kind: s.kind, value: v })) { panelT = setTimeout(pushPanel, 100); return; }
-  dirty.shift(); s.sent = v; lastPanel = Date.now();
-  if (dirty.length) panelT = setTimeout(pushPanel, 1000 / PANEL_HZ);
-}
-
-function mirror(m) {
-  if (state !== 'plaque' || m.plaque !== open) return;
-  for (const s of SL) {
-    const v = m[s.f];
-    if (s.p !== open || !Number.isFinite(v)) continue;
-    if (s.el.disabled || !held(s)) {
-      s.el.value = v; s.sent = v; // the host's value, not the thumb's: a thumb clamped below a kiosk rise of 64 still sends 48
-      s.el.setAttribute('aria-valuetext', s.fmt(v)); put(s.out, s.fmt(v));
-    }
-    s.el.disabled = false;
-  }
-  if (open === 'loco' && Number.isFinite(m.rpm)) put($('rpm'), String(Math.round(m.rpm)));
-  if (open === 'bridge' && typeof m.stands === 'boolean' && Number.isFinite(m.marginMm)) {
-    const at = m.where ? ' at the ' + m.where : '', v = $('verdict');
-    put(v, m.stands ? 'Stands · ' + m.marginMm + ' mm inside the ring' + at : 'Fails · leaves the ring by ' + (-m.marginMm) + ' mm' + at);
-    v.className = m.stands ? 'ok' : 'bad';
-    put($('push'), Number.isFinite(m.push) ? 'Abutment push ' + m.push.toFixed(2) + '× the half-arch weight' : '');
-  }
-}
-
-function near(p) {
-  const on = PLAQUES.indexOf(p) >= 0;
-  verb.textContent = on ? 'Look at ' + cards[p].fig : 'Walk to a plaque';
+// label: the object the figure stands at (from the host's {t:'near'}), or null.
+function near(label) {
+  const on = typeof label === 'string' && label !== '';
+  verb.textContent = on ? 'Poke the ' + label.slice(0, 40) : 'Walk to something';
   verb.setAttribute('aria-disabled', on ? 'false' : 'true');
 }
 
@@ -175,13 +95,14 @@ function welcome(m) {
     $('splashName').textContent = m.name; $('splash').hidden = false;
     clearTimeout(splashT); splashT = setTimeout(() => { $('splash').hidden = true; }, 3000);
   }
-  show(state === 'plaque' ? 'plaque' : 'walk'); // the host re-sends mode if it disagrees
+  show('walk');
+  armRoll();
 }
 
-const byeH = $('evicted').firstElementChild, BYE_DEFAULT = byeH.textContent;
+const byeH = $('evicted').querySelector('h1'), BYE_DEFAULT = byeH.textContent;
 const BYE = new Map([
-  ['idle', 'You were still for a while, so your place on the bank was freed.'],
-  ['judge', 'Your place on the bank was freed for a guided tour.'],
+  ['idle', 'You were still for a while, so your place in the picture was freed.'],
+  ['judge', 'Your place in the picture was freed for a guided tour.'],
   ['timeout', 'Your phone was away too long.'],
 ]);
 function evicted(keepToken, reason) {
@@ -195,6 +116,12 @@ function evicted(keepToken, reason) {
 }
 
 // ---- socket ----
+// 'replaced' (another tab took our token) ends the session, except just after this phone's own abandoned rollover,
+// when the host may have moved the seat to the rollover socket: then it is an ordinary drop that reconnects.
+function onClosed(w, e) {
+  if (ws !== w || w.retiring) return; // a retiring socket's close is our rollover
+  lost(w.rolled && Date.now() - w.rolled < 15000 && e.code === CLOSE_REPLACED ? 0 : e.code, e.reason);
+}
 function connect() {
   clearTimeout(retryT);
   let w;
@@ -202,14 +129,59 @@ function connect() {
   ws = w; armed = helloSent = false;
   dogT = setTimeout(() => lost(0), HB_WATCHDOG_MS); // a connect that hangs (captive Wi-Fi) is retried too
   // slot is ignored for a known token; after a hub restart it keeps this phone's colour
-  w.onopen = () => { clearTimeout(dogT); if (tok) hello({ t: 'hello', token: tok, slot: mySlot }); };
+  w.onopen = () => { w.openedAt = Date.now(); clearTimeout(dogT); if (tok) hello({ t: 'hello', token: tok, slot: mySlot }); };
   w.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (err) { return; } if (m && typeof m === 'object') onMsg(m); };
-  w.onclose = (e) => { if (ws === w) lost(e.code, e.reason); };
+  w.onclose = (e) => onClosed(w, e);
+}
+
+// Rollover (make-before-break): before Vercel's max duration closes this socket, open the next one and say hello
+// with our token. The host gives the seat to the newest socket and closes the old one, so the figure never stops.
+// Each socket rolls once, timed from when it opened: a welcome can come again at any time (the host's who).
+function armRoll() {
+  const w = ws;
+  if (!w || w.rollArmed) return;
+  w.rollArmed = true;
+  const age = Date.now() - (w.openedAt || Date.now());
+  scheduleRoll(Math.max(500, (ROLL || ROLLOVER_MS + Math.random() * ROLLOVER_JITTER_MS) - age));
+}
+function scheduleRoll(ms) { clearTimeout(rollT); rollT = setTimeout(roll, ms); }
+function roll() {
+  const a = ws;
+  if (!joined || !tok || !a || a.readyState !== 1) return; // no seat to keep: an ordinary reconnect is fine
+  let b;
+  try { b = new WebSocket(HUB); } catch (e) { return scheduleRoll(30000); }
+  a.retiring = true;
+  const abandon = () => {
+    clearTimeout(rollWaitT);
+    b.onopen = b.onmessage = b.onclose = null; try { b.close(); } catch (e) {}
+    a.retiring = false; a.rolled = Date.now();
+    if (ws !== a) return;
+    if (a.readyState !== 1) return lost(0);
+    // The host may already have moved the seat to b: claim it back on a (just a re-welcome if it never moved).
+    try { a.send(JSON.stringify({ t: 'hello', token: tok, slot: mySlot })); } catch (e) {}
+    scheduleRoll(30000);
+  };
+  rollWaitT = setTimeout(abandon, ROLL_WAIT_MS);
+  b.onclose = abandon;
+  b.onopen = () => { b.openedAt = Date.now(); b.send(JSON.stringify({ t: 'hello', token: tok, slot: mySlot })); };
+  b.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'evicted') { abandon(); return evicted(false, m.reason); }
+    if (m.t !== 'welcome') return; // the lobby and relay hb a fresh socket gets first
+    clearTimeout(rollWaitT);
+    if (ws !== a) { b.onclose = null; b.close(); return; }
+    a.onopen = a.onmessage = a.onclose = null; try { a.close(); } catch (err) {}
+    ws = b; armed = true;
+    b.onmessage = (ev) => { let mm; try { mm = JSON.parse(ev.data); } catch (err) { return; } if (mm && typeof mm === 'object') onMsg(mm); };
+    b.onclose = (ev) => onClosed(b, ev);
+    onMsg(m); // same pid and colour; re-arms the watchdog and the next rollover
+  };
 }
 
 function drop() {
   const w = ws;
-  ws = null; joined = false; clearTimeout(dogT);
+  ws = null; joined = false; clearTimeout(dogT); clearTimeout(rollT);
   if (w) { w.onopen = w.onmessage = w.onclose = null; try { w.close(); } catch (e) {} }
 }
 
@@ -245,30 +217,32 @@ function onMsg(m) {
   retry = 0;
   clearTimeout(bannerT); bannerT = 0; $('banner').hidden = true;
   clearTimeout(hintT); $('hint').hidden = true;
+  if (t !== 'hb' || m.ts !== undefined) hostSeen = Date.now(); // the relay's own hb has no ts; everything else is the host
 
   if (t === 'lobby') { if (!helloSent && state !== 'full') lobby(Array.isArray(m.free) ? m.free : []); }
   else if (t === 'welcome') welcome(m);
   else if (t === 'full') show('full');
-  else if (t === 'hb') {
-    if (m.ts !== undefined) send({ t: 'hbr', ts: m.ts });
-    if (typeof m.host === 'boolean') $('resting').hidden = m.host;
-  }
+  else if (t === 'hb') { if (m.ts !== undefined && joined) send({ t: 'hbr', ts: m.ts }); }
   else if (t === 'evicted') evicted(false, m.reason);
-  else if (!joined) return;
-  else if (t === 'mode') {
-    if (PLAQUES.indexOf(m.mode) >= 0) plaque(m.mode);
-    else if (MODES.indexOf(m.mode) >= 0) show('walk');
-    if (m.mode === 'reset') near(null);
+  // The host (re)connected and lost track of sockets: a seat answers with its token, a pending join repeats its
+  // hello, anyone else asks for the lobby.
+  else if (t === 'who') {
+    if (ws && ws.retiring) return; // mid-rollover: the new socket's hello claims the seat (abandon re-claims it here)
+    if (joined && tok) hello({ t: 'hello', token: tok, slot: mySlot });
+    else if (helloSent && lastHello) hello(lastHello);
+    else send({ t: 'here' });
   }
-  else if (t === 'near') near(m.plaque);
-  else if (t === 'readout') { if (m.plaque) mirror(m); else if (m.text) toast(String(m.text)); } // mirrors are never toasted
+  else if (!joined) return;
+  else if (t === 'mode') { show('walk'); if (m.mode === 'reset') near(null); } // 'walk' | 'reset': walk is the only seated screen
+  else if (t === 'near') near(m.label);
+  else if (t === 'readout') { if (m.text) toast(String(m.text)); }
 }
 
 // ---- input: hold-to-walk pad and verb button ----
 let lx = 0, a = 0, padId = null, verbId = null, lastIn = 0, inT;
 function setIn(nlx, na) {
   if (nlx === lx && na === a) return;
-  if (na && !a) lastIn = 0; // a Look is a rising edge on the host: never let IN_GAP coalesce a short tap away
+  if (na && !a) lastIn = 0; // a Poke is a rising edge on the host: never let IN_GAP coalesce a short tap away
   lx = nlx; a = na;
   pad.setAttribute('data-lx', lx);
   verb.classList.toggle('down', !!a);
@@ -332,16 +306,63 @@ document.addEventListener('visibilitychange', () => {
 // ---- buttons ----
 $('origBtn').onclick = () => {
   if (joined && $('resting').hidden) { send({ t: 'panel', kind: 'original', value: 1 }); return; } // the host replies with a readout
-  // not connected, or no host: show it here
-  const o = $('orig'), img = o.firstElementChild;
-  if (!img.getAttribute('src')) img.src = 'assets/turner-1920.jpg'; // about 700 KB, so fetched only here
-  o.hidden = false;
-  clearTimeout(origT); origT = setTimeout(() => { o.hidden = true; }, ORIGINAL_MS);
+  // The original is whatever the TV shows, so without the TV there is nothing to show here.
+  toast('The original shows on the screen once it is back');
 };
-$('orig').onclick = () => { clearTimeout(origT); $('orig').hidden = true; };
-$('done').onclick = () => { send({ t: 'panel', kind: 'done', value: 1 }); show('walk'); };
-$('export').onclick = () => send({ t: 'panel', kind: 'export', value: 1 }); // the host answers with a toasted readout
 $('again').onclick = start;
+
+// ---- Add artwork: photo -> downscale -> /api/interpret -> the scene URL to the host as {t:'panel', kind:'artwork'} ----
+// Only over https: the laptop hub serves no /api/interpret.
+const artBtn = $('artBtn'), artFile = $('artFile'), artLabel = $('artLabel'), ART_LABEL = artLabel.textContent; // the label span keeps the camera glyph
+const ART_MS = 40000; // the function's 25 s budget plus a slow phone upload; past it the button comes back
+const ART_FAIL = 'Couldn’t read that one; try another picture';
+const ART_SAY = new Map([
+  ['busy', 'One at a time: try again in a few seconds'],
+  ['quota', 'The artwork reader is resting; try a sample on the TV'],
+]);
+if (location.protocol === 'https:') $('art').hidden = false;
+function artBusy(on) { artBtn.disabled = on; artLabel.textContent = on ? 'Sending…' : ART_LABEL; }
+// The send can miss a beat (rate headroom while the pad is held, a socket switch), so it retries for about 5 s.
+function handOff(url, tries) {
+  return new Promise((done) => {
+    const go = (n) => {
+      if (joined && send({ t: 'panel', kind: 'artwork', value: url })) return done('On the TV in a moment');
+      if (n <= 0) return done('Couldn’t reach the screen; try again');
+      setTimeout(() => go(n - 1), 250);
+    };
+    go(tries);
+  });
+}
+artBtn.onclick = () => { if (!artBtn.disabled) artFile.click(); };
+artFile.onchange = () => {
+  const file = artFile.files && artFile.files[0];
+  artFile.value = ''; // the same photo can be picked again
+  if (!file) return;
+  artBusy(true);
+  const post = downscale(file)
+    .then((img) => fetch('/api/interpret', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img.base64, source: 'phone' }),
+    }))
+    .then((r) => r.json());
+  Promise.race([post, new Promise((ok, no) => setTimeout(no, ART_MS))])
+    .then((res) => {
+      if (res && res.ok === true && typeof res.scene_url === 'string' && res.scene_url) return handOff(res.scene_url, 20);
+      return (res && ART_SAY.get(res.reason)) || ART_FAIL;
+    }, () => ART_FAIL)
+    .then((text) => { toast(text); artBusy(false); });
+};
+
+// "The screen is resting": the relay answers but the host tab has been silent (closed, reloading, or its own link down).
+// A phone without a seat waits for the host's lobby; if it never came (the host missed this socket's open), ask.
+let lastHere = 0;
+setInterval(() => {
+  const resting = !!ws && armed && Date.now() - hostSeen > HOST_SEEN_MS;
+  if ($('resting').hidden === resting) $('resting').hidden = !resting;
+  const now = Date.now();
+  if (ws && ws.readyState === 1 && state === 'connecting' && !helloSent && now - (ws.openedAt || now) > 3000 && now - lastHere > 3000) {
+    lastHere = now; send({ t: 'here' });
+  }
+}, 1000);
 
 function start() {
   stopped = false; retry = 0;
