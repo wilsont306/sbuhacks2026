@@ -347,7 +347,7 @@ setInterval(() => {
   const inside = [...players].filter(([, p]) => p.inside);
   if (!inside.length || !open) return;
   const color = getComputedStyle(document.documentElement).getPropertyValue('--slot-keyboard').trim();
-  const figures = game.positions(), who = new Map(players).set(0, { name: 'Keyboard', color }), now = performance.now();
+  const figures = game.positions(), who = new Map(players).set(0, { name: 'Conductor', color }), now = performance.now();
   for (const [pid, p] of inside) {
     const m = posMsg(pid, figures, who), json = m && JSON.stringify(m);
     if (m && posDue(p.lastPos, json, p.lastPosAt, now, POS_KEEPALIVE_MS) && tell(pid, m)) { p.lastPos = json; p.lastPosAt = now; }
@@ -437,8 +437,8 @@ function render() {
     els.resting.replaceChildren(h('p', 'rest', 'This exhibit is resting. Please use the keyboard.', ...(stopped ? [h('small', '', stopped)] : [])));
   }
 
-  // On board: a seat per figure, the keyboard's first (artwork.js's boarding screen reads these rows: the dot's colour,
-  // the last span's name, .away), then the seats still open.
+  // On board: a seat per figure, the Conductor's (the TV's keyboard player) first, then the seats still open.
+  // artwork.js's boarding screen reads these rows: the dot's colour, the last span's name, .away.
   const seat = (color, name, away, cls = '') => {
     const li = h('li', `${cls} ${away ? 'away' : ''}`.trim(), dot(color), h('span', '', name, away ? ' (away)' : ''));
     li.style.setProperty('--seat', color);
@@ -446,7 +446,7 @@ function render() {
   };
   const free = MAX_PLAYERS - players.size;
   els.roster?.replaceChildren(h('h2', '', 'On board'), h('ul', '',
-    seat('var(--slot-keyboard)', 'Keyboard', false, 'kbd'),
+    seat('var(--slot-keyboard)', 'Conductor', false, 'kbd'),
     ...[...players.values()].map((p) => seat(p.color, p.name, p.away))),
   ...(resting ? [] : [h('p', 'open', free > 0 ? `${free} ${free === 1 ? 'seat' : 'seats'} open` : 'Every seat taken')])); // resting: no one can board
   document.getElementById('tv')?.classList.toggle('hud-open', hudOpen); // the operator's cards (host.css, margins.css)

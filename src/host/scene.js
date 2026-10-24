@@ -75,7 +75,7 @@ const glow = new Float32Array(SLOTS);
 
 // ---------- renderer, scene, relief ----------
 const scene = new THREE.Scene();
-const stageBg = new THREE.Color(tok('--prussian-deep'));
+const stageBg = new THREE.Color(tok('--rail-night'));
 scene.background = stageBg;
 const camera = new THREE.PerspectiveCamera(FOV, SW / SH, 0.1, 50);
 
@@ -182,7 +182,6 @@ function build(tex, aspect, d, ids, points, newStops) {
     if (f.near != null) { f.near = null; emit({ type: 'near', pid, object: null, label: null }); }
     place(f);
   }
-  ghost.t = clamp(ghost.t, MIN_T, 0.98); place(ghost);
   if (originalImg.getAttribute('src') !== imageUrl) originalImg.src = imageUrl;
   originalTag.textContent = `Original. ${credit}`;
   renderCaption(); renderHint();
@@ -202,9 +201,6 @@ function makeFigure(color, bonnet, name, tagged) {
   upload(tex);
   return { tex, sprite, shadow, tag, color, bonnet, name, t: 0, lx: 0, a: 0, frozen: false, facing: 1, phase: 0, pulse: 0, near: null, active: true };
 }
-// The attract figure: strolls the path when A has it on; not a window.game player and never at a stop.
-const ghost = Object.assign(makeFigure('#7a93c9', true, 'Ghost passenger', false), { t: 0.62, lx: -1, facing: -1 });
-
 function place(f) {
   const p = at(f.t, 0.015, f.sprite.position);
   const h = figH(f.t), k = f.pulse > 0 ? 1 + 0.18 * Math.abs(Math.sin(Math.PI * f.pulse / 0.6)) : 1; // one pulse per 0.6 s
@@ -288,7 +284,8 @@ const game = window.game = {
     name = String(name ?? ''); color = String(color || tok('--cream'));
     const f = players.get(pid);
     if (!f) {
-      const n = Object.assign(makeFigure(color, pid % 2 === 0, name, pid !== 0), { t: startT(pid), pulse: reduced || pid === 0 ? 0 : 1.2 });
+      // pid 0, the TV's own keyboard player, is the Conductor; phones alternate top hat and bonnet.
+      const n = Object.assign(makeFigure(color, pid === 0 ? 'conductor' : pid % 2 === 0, name, pid !== 0), { t: startT(pid), pulse: reduced || pid === 0 ? 0 : 1.2 });
       players.set(pid, n); place(n);
       return;
     }
@@ -326,7 +323,6 @@ const game = window.game = {
   showOriginal() { originalEl.hidden = false; clearTimeout(originalTimer); originalTimer = setTimeout(hideOriginal, ORIGINAL_MS); renderTag(); },
   reset() {
     for (const [pid, f] of players) Object.assign(f, { t: startT(pid), lx: 0, a: 0, frozen: false, facing: 1, phase: 0, pulse: 0 });
-    Object.assign(ghost, { t: 0.62, lx: -1, facing: -1, active: true });
     keys.left = keys.right = keys.verb = false; glow.fill(0);
     setLayer(0); attract.idle = 0; stopAttract(); renderHint();
   },
@@ -387,7 +383,7 @@ const game = window.game = {
 };
 
 // ---------- follow camera ----------
-const group = () => (ghost.active ? [...players.values(), ghost] : [...players.values()]); // never empty: pid 0 stays
+const group = () => [...players.values()]; // never empty: pid 0 stays
 function aimCamera() {
   if (overlay.visible) { Object.assign(aim, { tx: 0, ty: 0, zoom: 1 }); return; } // hold still on the whole path while dots are dragged
   const looks = [];
@@ -411,11 +407,6 @@ function step() {
     if (near !== f.near) { f.near = near; emit({ type: 'near', pid, object: near, label: st ? st.label : null }); if (pid === 0) renderHint(); }
     f.pulse = Math.max(0, f.pulse - STEP);
   }
-  if (ghost.active) {
-    ghost.t += ghost.lx * SPEED * 0.6 * STEP;
-    if (ghost.t > 0.98) ghost.lx = -1; else if (ghost.t < MIN_T) ghost.lx = 1;
-    ghost.t = clamp(ghost.t, MIN_T, 0.98); ghost.facing = ghost.lx; ghost.phase += STEP * 5;
-  }
   attract.idle += STEP;
   if (!attract.on && !judge && attract.idle > 45) { attract.on = true; renderCaption(); }
   else if (attract.on && judge) stopAttract();
@@ -423,7 +414,6 @@ function step() {
   uniforms.amp.value += ((layer === 'exploded' ? AMP * EXPLODE : AMP) - uniforms.amp.value) * EASE_AMP;
   stepGlow();
   for (const f of players.values()) place(f);
-  place(ghost);
   aimCamera(); stepCamera(STEP); arrangeTags();
 }
 
@@ -465,7 +455,7 @@ function frame(now) {
   if (fpsT >= 0.5) { fps = Math.round(frames / fpsT); frames = fpsT = 0; if (layer !== 'painting') renderTag(); }
 }
 
-// ---------- input: scene owns ← → Space Enter Esc O W M ` A (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X, models3d D, apibox K) ----------
+// ---------- input: scene owns ← → Space Enter Esc O W M ` (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X, models3d D, apibox K) ----------
 const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const kb = () => game.setInput(0, keys.right - keys.left, keys.verb ? 1 : 0);
 addEventListener('keydown', (e) => {
@@ -483,7 +473,6 @@ addEventListener('keydown', (e) => {
   else if (k === 'w') setLayer(LAYERS.indexOf(layer) + 1);
   else if (k === 'm') setReduced(!reduced);
   else if (k === '`' || e.code === 'Backquote') overlay.toggle();
-  else if (k === 'a') ghost.active = !ghost.active;
   else return;
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'Enter') kb();
   e.preventDefault();
@@ -512,7 +501,7 @@ stage.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && e.
 // ---------- boot: the Turner on its hand-authored relief, no stops, until artwork.js loads sample 1 ----------
 setReduced(reduced);
 build(blank, TURNER, placeholderDepth(), { data: new Uint8Array(1), w: 1, h: 1 }, BOOT_POINTS, []); // before any figure: place() needs the curve
-game.addPlayer(0, 'Keyboard', tok('--slot-keyboard'));
+game.addPlayer(0, 'Conductor', tok('--slot-keyboard'));
 renderHint();
 requestAnimationFrame(frame);
 
@@ -521,7 +510,7 @@ loadImage(BOOT_IMG).then((img) => { if (gen === 0) swapTex('map', imageTexture(i
 loadSheets().then((s) => {
   if (!s) return;
   sheets = s;
-  for (const f of [...players.values(), ghost]) { paintSheet(f.tex.image, s, f.color, f.bonnet); f.tex.needsUpdate = true; upload(f.tex); }
+  for (const f of players.values()) { paintSheet(f.tex.image, s, f.color, f.bonnet); f.tex.needsUpdate = true; upload(f.tex); }
 });
 document.fonts?.load('600 56px "Libre Franklin"').then(() => {
   for (const sp of [...players.values()].map((f) => f.tag).filter(Boolean)) { drawLabel(sp); upload(sp.material.map); }
