@@ -48,6 +48,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--rail-n
 /* Operator cards (the mode tag, the HUD, apibox.js's API button; K still opens its box) are for whoever runs the TV,
    not its riders: H shows them (glue.js sets #tv.hud-open). The resting note is for riders and always shows. */
 #tv:not(.hud-open) :is(#modeTag, #hud, .api-open) { display: none; }
+/* Except J's guided tour: the attendant presses J and must see it took, so its tag alone shows without H. */
+#tv:not(.hud-open) #modeTag:has(.judge) { display: flex; }
+#tv:not(.hud-open) #modeTag:has(.judge) > span:not(.judge) { display: none; }
 #tv.hud-open :is(#hud, #source) { flex: 0 1 auto; min-height: 0; overflow: hidden; } /* they give way with the riders, never the ticket */
 #modeTag, #hud, #resting {
   flex: none; padding: 10px 12px; border: 1px solid var(--rule-frame); border-radius: var(--radius-card);

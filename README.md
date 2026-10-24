@@ -403,7 +403,7 @@ Host page DOM. The TV is a 1920 by 1080 frame scaled to fit the window (`--fit`)
 
 - A 236 px left margin: `#label` (filled by margins.js, which also appends `#legend`, the stops).
 - The 1447 px stage `#stage`: canvas `#gl`, `#status`, `#hint`, `#caption`, and `#original` holding an `<img>` and a `p.tag`.
-- A 237 px right margin: `#modeTag`, `#hud`, `#roster`, `#resting`, `#qr`. margins.js prepends `#source`, and apibox.js inserts the API button (`.api-open`) right after `#modeTag`. The operator's parts (`#modeTag`, `#hud`, `.api-open`, and `#source`'s thumbnail and badge) show only while H puts `#tv.hud-open` on; K opens the API box either way.
+- A 237 px right margin: `#modeTag`, `#hud`, `#roster`, `#resting`, `#qr`. margins.js prepends `#source`, and apibox.js inserts the API button (`.api-open`) right after `#modeTag`. The operator's parts (`#modeTag`, `#hud`, `.api-open`, and `#source`'s thumbnail and badge) show only while H puts `#tv.hud-open` on, except the mode tag's "Guided tour" while J has judge mode on (the attendant sees it took); K opens the API box either way.
 
 At runtime the stage also gets the path overlay canvas and its Save button (pathOverlay.js), `#platforms` and `#learning` (margins.js), `#artGallery`, the drop hint and a hidden file input (artwork.js), and `#apiBox` (apibox.js). Stacking order: the stage's vignette and brass rule (`#stage::before` and `::after`) at 1, status, hint and caption at 2, `#platforms` 4, path overlay 5 and 6, gallery 7, Learning 8, drop hint 9, `#original` 10, `#apiBox` 11. Any new stage overlay sits at 2 or higher. glue.js renders only into `#roster`, `#hud`, `#qr` and `#resting`. scene.js renders into `#status`, `#hint`, `#caption`, `#original` and `#modeTag`.
 
