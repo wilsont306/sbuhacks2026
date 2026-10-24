@@ -276,7 +276,7 @@ export function buildDiorama(scene, texture, opts) {
     return { position: floorAt(tt), forward };
   }
 
-  let time = 0, disposed = false, lit = false;
+  let time = 0, disposed = false;
   function update(dt, reducedMotion) {
     if (disposed) return;
     time += clamp(fin(dt) ? dt : 0, 0, 0.1);
@@ -298,6 +298,21 @@ export function buildDiorama(scene, texture, opts) {
       }, undefined, (e) => { clearTimeout(timer); reject(e); });
     })).then((model) => {
       if (disposed) { disposeTree(model); return false; }
+      // Unlit, like the painted room: Tripo's metallic PBR has nothing to reflect here and renders near black. The
+      // colour texture is shown as stored (linear), the way the painting's own texture is.
+      model.traverse((n) => {
+        if (!n.isMesh) return;
+        const olds = Array.isArray(n.material) ? n.material : [n.material];
+        const made = olds.map((m) => {
+          const map = m && m.map ? m.map : null;
+          if (map) map.encoding = THREE.LinearEncoding;
+          const flat = new THREE.MeshBasicMaterial({ map: map, color: map || !(m && m.color) ? 0xffffff : m.color.getHex(), side: THREE.DoubleSide,
+            vertexColors: !!(n.geometry && n.geometry.attributes && n.geometry.attributes.color), transparent: !!(m && m.transparent), alphaTest: (m && m.alphaTest) || 0 });
+          if (m) m.dispose();
+          return flat;
+        });
+        n.material = Array.isArray(n.material) ? made : made[0];
+      });
       const holder = new THREE.Group();
       model.rotation.y = MODEL_YAW;
       holder.add(model);
@@ -308,13 +323,6 @@ export function buildDiorama(scene, texture, opts) {
       holder.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k, -(box.min.z + box.max.z) / 2 * k);
       fl.pivot.add(holder);
       fl.mesh.visible = false;
-      if (!lit) {
-        lit = true;
-        group.add(new THREE.HemisphereLight(0xfff4e0, 0x404858, 1));
-        const sun = new THREE.DirectionalLight(0xffffff, 0.6);
-        sun.position.set(-1, 3, 2);
-        group.add(sun);
-      }
       return true;
     }).catch(() => false); // the flat stays
   }
