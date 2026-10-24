@@ -11,7 +11,6 @@ import { WS_PATH } from './src/shared/protocol.js';
 
 const env = process.env;
 const PORT = Number(env.PORT) || 8080;
-const HOST_TOKEN = env.HOST_TOKEN || '';               // empty = no check (local only)
 const DIST = fileURLToPath(new URL('./dist/', import.meta.url));
 
 // Recomputed per call: the laptop may move from campus Wi-Fi to the hotspot after the hub starts.
@@ -26,8 +25,9 @@ const joinUrl = () => env.JOIN_URL || `http://${lanIp()}${PORT === 80 ? '' : ':'
 
 const relay = createRelay({
   bus: createBroker().bus(),
-  hostToken: HOST_TOKEN,
-  info: () => ({ joinUrl: joinUrl(), lanIp: lanIp(), region: 'local', wifi: env.WIFI_SSID ? { ssid: env.WIFI_SSID, pass: env.WIFI_PASS || '' } : null, bus: 'local' }),
+  // The hotspot password goes only to a TV on this laptop (its Q socket is ws://localhost); anyone can host a room now.
+  info: (req) => ({ joinUrl: joinUrl(), lanIp: lanIp(), region: 'local', bus: 'local',
+    wifi: env.WIFI_SSID && /^(::1|127\.|::ffff:127\.)/.test((req && req.socket && req.socket.remoteAddress) || '') ? { ssid: env.WIFI_SSID, pass: env.WIFI_PASS || '' } : null }),
 });
 
 const app = express();
@@ -39,10 +39,8 @@ app.get('/healthz', (req, res) => {
 const page = (res, file) => res.sendFile(DIST + file, { headers: { 'Cache-Control': 'no-cache' } },
   (err) => { if (err && !res.headersSent) res.status(404).type('text').send('dist missing: run npm run build'); });
 app.get('/', (req, res) => page(res, 'join.html'));
-app.get('/host', (req, res) => {
-  if (HOST_TOKEN && req.query.host !== HOST_TOKEN) return res.status(403).type('text').send('host token required');
-  page(res, 'host.html');
-});
+// Open to anyone: each TV hosts its own room with its own key, so the page needs no token.
+app.get('/host', (req, res) => page(res, 'host.html'));
 // Vite's hashed bundles are immutable; public files (samples, sfx, sprites) change during the event.
 app.use(express.static(DIST, { index: false, setHeaders: (res, file) =>
   res.setHeader('Cache-Control', /-[\w-]{8}\.\w+$/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache') }));

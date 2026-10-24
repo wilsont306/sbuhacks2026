@@ -19,7 +19,24 @@ import {
 } from '../shared/protocol.js';
 import './glue.css';
 
-/* pure:start (tests/glue.test.js imports this block on its own, so it must not use imports or globals) */
+/* pure:start (tests/glue.test.js imports this block on its own, so it must not use imports or page globals) */
+// The TV's room key (README Rooms): the stored one when well formed, else `bytes` (16 random) as base64url, 22 characters.
+export const KEY_RE = /^[A-Za-z0-9_-]{22,64}$/;
+export const pickKey = (stored, bytes) => typeof stored === 'string' && KEY_RE.test(stored) ? stored
+  : btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+// The QR's join URL: the relay's joinUrl with ?room= set, or '' while either is missing or malformed.
+export function joinWithRoom(url, room) {
+  if (typeof url !== 'string' || typeof room !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(room)) return '';
+  try { const u = new URL(url); u.searchParams.set('room', room); return u.href; } catch { return ''; }
+}
+
+// The seats' store, tagged with the room key: a seat list saved under another key (another room) reads as nothing.
+export const roomStore = (store, tag) => store && {
+  get: () => { const v = store.get(); return typeof v === 'string' && v.startsWith(tag + '\n') ? v.slice(tag.length + 1) : null; },
+  set: (v) => store.set(tag + '\n' + v),
+};
+
 // B4: phones quiet longer than `idle` go ('idle'); in judge mode so do phones that were on the bank at J once quiet
 // longer than `judgeIdle` ('judge'). Never already-kicked phones, or guests while judge mode is on.
 export function idleKicks(players, now, judge, { idle, judgeIdle }) {
@@ -116,9 +133,16 @@ enrich.init({ game, token, margins }); // depth (and, through onScene, 3D models
 
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
 const storage = (key) => { try { const ls = window.localStorage; return { get: () => ls.getItem(key), set: (v) => ls.setItem(key, v) }; } catch { return null; } };
+// This TV's room: the relay hashes the key into the room the QR carries, so a reload keeps the room and a new
+// browser is a new one. Never shown: whoever holds the key can host the room. No storage: a new room per load.
+const keyStore = storage('tt.hostKey');
+let hostKey = null;
+try { hostKey = keyStore.get(); } catch {}
+hostKey = pickKey(hostKey, crypto.getRandomValues(new Uint8Array(16)));
+try { keyStore.set(hostKey); } catch {}
 // Seats, tokens and the cap live here in the host tab; the relay only routes. Its events land in onHub below.
 const seats = createSlots({
-  slots: SLOTS, max: MAX_PLAYERS, holdMs: SLOT_HOLD_MS, store: storage('tt.seats'),
+  slots: SLOTS, max: MAX_PLAYERS, holdMs: SLOT_HOLD_MS, store: roomStore(storage('tt.seats'), hostKey),
   send: (cid, msg) => send({ t: 'to', cid, msg }),
   close: (cid, code, reason, msg) => send({ t: 'close', cid, code, reason, msg }),
   emit: (m) => onHub(m),
@@ -136,14 +160,14 @@ function connect(roll = false) {
   const base = fallback ? FALLBACK : primary;
   const prev = roll ? ws : null;
   let s;
-  try { s = new WebSocket(base + (base.includes('?') ? '&' : '?') + 'role=host&host=' + encodeURIComponent(token)); }
+  try { s = new WebSocket(base + (base.includes('?') ? '&' : '?') + 'role=host&key=' + hostKey); }
   catch { if (prev) scheduleRoll(30000); else later(); return; }
   const onClose = (e) => {
     if (ws !== s || s.retiring) return;
     ws = null; clearTimeout(rollT); lost();
     // A 4000 on a socket whose rollover was abandoned comes from that rollover's own socket, not another tab.
     if (e.code === CLOSE_HOST_REPLACED && !s.rolled) stopped = 'Another host tab took over.';
-    else if (e.code === CLOSE_BAD_HOST_TOKEN) stopped = 'The hub refused the host token.';
+    else if (e.code === CLOSE_BAD_HOST_TOKEN) stopped = 'The hub refused this screen’s room key.';
     else later();
   };
   if (prev) {
@@ -379,8 +403,9 @@ function qrFigure(text, caption, url) {
 }
 
 function drawQr() {
-  // A JOIN_URL that carries the host token must never reach the screen.
-  joinUrl = typeof hub?.joinUrl === 'string' && !(token && hub.joinUrl.includes(token)) ? hub.joinUrl : '';
+  // A JOIN_URL that carries the host token must never reach the screen. Each hub's greeting brings the room (the
+  // same one on Q's laptop hub, since it comes from the key), and every join QR carries it.
+  joinUrl = hub && !(token && String(hub.joinUrl).includes(token)) ? joinWithRoom(hub.joinUrl, hub.room) : '';
   const wifi = fallback && hub?.wifi?.ssid ? hub.wifi : null;
   els.qr?.replaceChildren(...(!joinUrl ? [] : wifi
     ? [qrFigure(wifiPayload(wifi), '1  Join the Toy Theatre Wi-Fi'), qrFigure(joinUrl, '2  Scan to walk into the picture', short(joinUrl))]

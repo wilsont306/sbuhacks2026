@@ -4,9 +4,63 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(new URL('../src/host/glue.js', import.meta.url), 'utf8');
-const block = src.slice(src.indexOf('/* pure:start'), src.indexOf('/* pure:end */'));
-const g = await import('data:text/javascript,' + encodeURIComponent(block));
+const pure = (path) => {
+  const src = readFileSync(new URL(path, import.meta.url), 'utf8');
+  return import('data:text/javascript,' + encodeURIComponent(src.slice(src.indexOf('/* pure:start'), src.indexOf('/* pure:end */'))));
+};
+const g = await pure('../src/host/glue.js');
+const phone = await pure('../src/join/main.js'); // the phone page's pure block
+
+test('room key: a well-formed stored key stays, else 16 random bytes as 22 base64url characters', () => {
+  const k22 = 'Ab-_0123456789xyzXYZab', k64 = 'a'.repeat(64), zeros = new Uint8Array(16), ones = new Uint8Array(16).fill(255);
+  assert.equal(g.pickKey(k22, ones), k22);
+  assert.equal(g.pickKey(k64, ones), k64);
+  assert.equal(g.pickKey(null, zeros), 'A'.repeat(22));
+  assert.equal(g.pickKey(null, ones), '_'.repeat(21) + 'w'); // '+' and '/' never appear, nor '=' padding
+  for (const bad of [undefined, '', 'a'.repeat(21), 'a'.repeat(65), 'Ab+/0123456789xyzXYZab', 'Ab=_0123456789xyzXYZab', 42]) {
+    assert.equal(g.pickKey(bad, zeros), 'A'.repeat(22), String(bad));
+  }
+  const fresh = g.pickKey(null, Uint8Array.from({ length: 16 }, (_, i) => i * 17));
+  assert.equal(fresh.length, 22);
+  assert.match(fresh, g.KEY_RE);
+});
+
+test('join URL: the relay joinUrl with ?room=, else nothing for the QR', () => {
+  const R = 'abcDEF0123456_-z';
+  assert.equal(g.joinWithRoom('https://x.vercel.app/', R), 'https://x.vercel.app/?room=' + R);
+  assert.equal(g.joinWithRoom('https://x.vercel.app', R), 'https://x.vercel.app/?room=' + R);
+  assert.equal(g.joinWithRoom('http://192.168.1.5:8080/', R), 'http://192.168.1.5:8080/?room=' + R); // the laptop hub (Q)
+  assert.equal(g.joinWithRoom('https://x.app/?hub=y.app#a', R), 'https://x.app/?hub=y.app&room=' + R + '#a');
+  assert.equal(g.joinWithRoom('https://x.app/?room=old', R), 'https://x.app/?room=' + R);
+  for (const bad of [undefined, null, '', 'abc', R.slice(1), R + 'a', 'abcDEF0123456/+z']) assert.equal(g.joinWithRoom('https://x.app/', bad), '', String(bad));
+  for (const bad of [undefined, null, '', 'not a url', '/relative']) assert.equal(g.joinWithRoom(bad, R), '', String(bad));
+});
+
+test('seat store: tagged with the room key, so seats saved under another key (or untagged) are not restored', () => {
+  const mem = () => { let v = null; return { get: () => v, set: (x) => { v = x; } }; };
+  const ls = mem(), a = g.roomStore(ls, 'keyA'), b = g.roomStore(ls, 'keyB');
+  assert.equal(a.get(), null);
+  a.set('{"v":1}');
+  assert.equal(a.get(), '{"v":1}');
+  assert.equal(b.get(), null);
+  ls.set('{"v":1}'); // saved before rooms
+  assert.equal(a.get(), null);
+  assert.equal(g.roomStore(null, 'keyA'), null); // no storage: no restore, as before
+});
+
+test('phone seat: the URL room, else the saved one; a token only for its own room', () => {
+  const A = 'roomAAAAAAAAAAAA', B = 'roomBBBBBBBBBBBB';
+  assert.deepEqual(phone.pickSeat(A, { room: A, token: 't1' }), { room: A, token: 't1' });
+  assert.deepEqual(phone.pickSeat(A, { room: B, token: 't1' }), { room: A, token: null }); // another room clears it
+  assert.deepEqual(phone.pickSeat(A, null), { room: A, token: null });
+  assert.deepEqual(phone.pickSeat(null, { room: B, token: 't1' }), { room: null, token: null }); // no QR: scan again
+  assert.deepEqual(phone.pickSeat('bad', { room: B, token: null }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(null, null), { room: null, token: null }); // the "Scan the code" screen
+  assert.deepEqual(phone.pickSeat(null, 't1'), { room: null, token: null }); // a v1 token without a room
+  assert.deepEqual(phone.pickSeat(null, { token: 't1' }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(A + 'x', { room: 'short', token: 't1' }), { room: null, token: null });
+  assert.deepEqual(phone.pickSeat(A, { room: A, token: '' }), { room: A, token: null });
+});
 
 test('idle kicks: 90 s for everyone, 30 s for pre-J phones in judge mode, guests and kicked phones exempt', () => {
   const L = { idle: 90000, judgeIdle: 30000 }, now = 100000;

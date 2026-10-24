@@ -17,7 +17,6 @@ const region = env.VERCEL_REGION || 'vercel';
 
 const relay = createRelay({
   bus,
-  hostToken: env.HOST_TOKEN || '',
   info: (req) => ({ joinUrl: env.JOIN_URL || `https://${req.headers.host}/`, lanIp: null, region, wifi: null, bus: url ? 'redis' : 'local' }),
 });
 

@@ -44,7 +44,7 @@ main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction
 /* 24 px side padding keeps the pad clear of Safari's edge swipe */
 .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px; animation: fade-in var(--fade) ease-out; }
 
-/* ---- connecting, full, evicted: one calm centred paper card ---- */
+/* ---- connecting, full, evicted, noroom: one calm centred paper card ---- */
 .card {
   width: 100%; max-width: 440px; margin: auto; padding: 32px 24px; border-radius: var(--radius-card);
   background: var(--cream); color: var(--ink); text-align: center; box-shadow: var(--shadow-card);

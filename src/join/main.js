@@ -1,5 +1,5 @@
 // Phone controller (v2). The host owns all game state; this page shows one screen per state
-// (connecting, lobby, walk, full, evicted), sends pad and verb input to the hub, and hands the TV a photographed
+// (connecting, lobby, walk, full, evicted, and noroom without a room), sends pad and verb input to the hub, and hands the TV a photographed
 // artwork: the phone POSTs it to /api/interpret itself and sends only the returned scene URL.
 // No ES2020 syntax (?. ??): iOS 13 Safari must parse this.
 import '../shared/tokens.css';
@@ -9,11 +9,23 @@ import '@fontsource/libre-franklin/latin-600.css';
 import './join.css';
 import NoSleep from 'nosleep.js';
 import {
-  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, CLOSE_EVICTED, CLOSE_REPLACED,
+  hubUrl, HB_WATCHDOG_MS, INPUT_HZ, MSGS_PER_SEC, CLOSE_EVICTED, CLOSE_REPLACED, CLOSE_NO_ROOM,
   ROLLOVER_MS, ROLLOVER_JITTER_MS, ROLL_WAIT_MS, HOST_SEEN_MS,
 } from '../shared/protocol.js';
 import { downscale } from '../shared/downscale.js';
 import slots from '../shared/slots.json';
+
+/* pure:start (tests/glue.test.js imports this block on its own: no imports, no page globals, no ES2020 syntax) */
+// The room this phone plays in and its seat token. The room is only ever the URL's ?room= (the TV's QR; a reload
+// keeps it), never a saved one, which may belong to a TV that has gone. A token belongs to the room it was won in,
+// so another room starts without one. `saved` is the stored {room, token}.
+export function pickSeat(urlRoom, saved) {
+  const ok = (r) => typeof r === 'string' && /^[A-Za-z0-9_-]{16}$/.test(r);
+  if (!ok(urlRoom)) return { room: null, token: null };
+  const s = saved && typeof saved === 'object' && saved.room === urlRoom ? saved : null;
+  return { room: urlRoom, token: s && typeof s.token === 'string' && s.token ? s.token : null };
+}
+/* pure:end */
 
 const $ = (id) => document.getElementById(id);
 const body = document.body, pad = $('pad'), verb = $('verb');
@@ -24,12 +36,17 @@ const BACKOFF = [500, 1000, 2000, 4000, 8000];
 const IN_GAP = 60; // ms between 'in' messages: ~16/s leaves room under the hub's 20/s for hbr and panel
 const DEAD = 0.075; // half of the 15%-wide dead zone at the pad centre, as a fraction of pad width
 
-let tok = null;
-try { tok = localStorage.getItem('tt.token'); } catch (e) {}
+// The room and token live together in tt.seat; v1's bare tt.token (no room) is never read.
+let saved = null;
+try { saved = JSON.parse(localStorage.getItem('tt.seat')); } catch (e) {}
+const seat = pickSeat(QS.get('room'), saved), ROOM = seat.room;
+const WS = ROOM && HUB + (HUB.indexOf('?') < 0 ? '?' : '&') + 'room=' + ROOM; // every socket, rollover included
+let tok = seat.token;
 function setTok(t) {
   tok = t;
-  try { if (t) localStorage.setItem('tt.token', t); else localStorage.removeItem('tt.token'); } catch (e) {}
+  try { localStorage.setItem('tt.seat', JSON.stringify({ room: ROOM, token: t || null })); } catch (e) {}
 }
+if (ROOM) setTok(tok); // a new room drops the old room's token
 
 let state = '', ws = null, joined = false, armed = false, helloSent = false, lastHello = null, stopped = false, named = false, mySlot;
 let retry = 0, retryT, bannerT = 0, hintT, dogT, fullT, toastT, splashT;
@@ -41,6 +58,7 @@ function show(s) {
   if (s !== 'walk') { leaveInside(false); zero(); } // the socket is gone or seatless: nothing to tell the host
   state = s;
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== s;
+  $('origBtn').hidden = s === 'noroom'; // no TV to show it on
   clearInterval(fullT);
   if (s === 'full') fullT = setInterval(() => hello(lastHello), 3000);
 }
@@ -126,7 +144,7 @@ function onClosed(w, e) {
 function connect() {
   clearTimeout(retryT);
   let w;
-  try { w = new WebSocket(HUB); } catch (e) { return lost(0); }
+  try { w = new WebSocket(WS); } catch (e) { return lost(0); }
   ws = w; armed = helloSent = false;
   dogT = setTimeout(() => lost(0), HB_WATCHDOG_MS); // a connect that hangs (captive Wi-Fi) is retried too
   // slot is ignored for a known token; after a hub restart it keeps this phone's colour
@@ -150,7 +168,7 @@ function roll() {
   const a = ws;
   if (!joined || !tok || !a || a.readyState !== 1) return; // no seat to keep: an ordinary reconnect is fine
   let b;
-  try { b = new WebSocket(HUB); } catch (e) { return scheduleRoll(30000); }
+  try { b = new WebSocket(WS); } catch (e) { return scheduleRoll(30000); }
   a.retiring = true;
   const abandon = () => {
     clearTimeout(rollWaitT);
@@ -191,6 +209,10 @@ function lost(code, reason) {
   $('resting').hidden = true;
   if (code === CLOSE_EVICTED) return evicted(false, reason);
   if (code === CLOSE_REPLACED) return evicted(true); // another tab of this phone took the token; reconnecting would steal it back forever
+  if (code === CLOSE_NO_ROOM) { // the relay refused our room: only a fresh scan helps
+    stopped = true; clearTimeout(hintT); clearTimeout(bannerT); bannerT = 0; $('banner').hidden = true;
+    return show('noroom');
+  }
   if (stopped) return;
   if (state !== 'connecting' && !bannerT) bannerT = setTimeout(() => { $('banner').hidden = false; }, 1000);
   clearTimeout(retryT);
@@ -403,6 +425,7 @@ setInterval(() => {
 }, 1000);
 
 function start() {
+  if (!ROOM) return show('noroom'); // no QR scanned, nothing saved: no socket to open
   stopped = false; retry = 0;
   show('connecting');
   clearTimeout(hintT); hintT = setTimeout(() => { $('hint').hidden = false; }, 4000);
