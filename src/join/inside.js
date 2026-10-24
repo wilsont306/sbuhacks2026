@@ -266,7 +266,7 @@ export function open(ctx) {
     hintSay(END_HINT, 4000);
   }
   function makeFigure(o) {
-    const color = okColor(o.color), tex = sheetTexture(null, color, o.pid % 2 === 0); // bonnet for even pids, as on the TV
+    const color = okColor(o.color), tex = sheetTexture(null, color, o.pid === 0 ? 'conductor' : o.pid % 2 === 0); // as on the TV: pid 0 the Conductor, then bonnet for even pids
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, alphaTest: 0.5 }));
     sprite.center.set(0.5, 0);
     const tag = textSprite(String(o.name || '').slice(0, 40), { bg: tok('--ink'), fg: tok('--cream'), dot: color, alpha: 0.85 });

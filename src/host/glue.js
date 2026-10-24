@@ -345,7 +345,7 @@ setInterval(() => {
   const inside = [...players].filter(([, p]) => p.inside);
   if (!inside.length || !open) return;
   const color = getComputedStyle(document.documentElement).getPropertyValue('--slot-keyboard').trim();
-  const figures = game.positions(), who = new Map(players).set(0, { name: 'Keyboard', color }), now = performance.now();
+  const figures = game.positions(), who = new Map(players).set(0, { name: 'Conductor', color }), now = performance.now();
   for (const [pid, p] of inside) {
     const m = posMsg(pid, figures, who), json = m && JSON.stringify(m);
     if (m && posDue(p.lastPos, json, p.lastPosAt, now, POS_KEEPALIVE_MS) && tell(pid, m)) { p.lastPos = json; p.lastPosAt = now; }
@@ -434,7 +434,7 @@ function render() {
 
   const row = (color, name, away) => h('li', away ? 'away' : '', dot(color), h('span', '', name, away ? ' (away)' : ''));
   els.roster?.replaceChildren(h('h2', '', 'In the picture'), h('ul', '',
-    row('var(--slot-keyboard)', 'Keyboard', false),
+    row('var(--slot-keyboard)', 'Conductor', false), // the TV's own keyboard player
     ...[...players.values()].map((p) => row(p.color, p.name, p.away))));
 
   const where = !hub ? '—' : hub.region === 'local' ? 'local' : `vercel ${hub.region}${hub.bus === 'redis' ? '' : ' · no redis'}`;
