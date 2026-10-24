@@ -1,5 +1,5 @@
 // Host glue: the relay socket, the seats (src/host/slots.js), the player manager, the phones' panel kinds ('original',
-// 'artwork', 'inside', and 'look', which is activity only: panel() stamps lastActive for every kind; decided here and
+// 'artwork', 'inside', 'listen' (a description's narration, through /api/speak), and 'look', which is activity only: panel() stamps lastActive for every kind; decided here and
 // only here, the host never trusts a phone), the scene's hotspot events (near,
 // describe, layer, scene) relayed to phones, audio and margins, the inside phones' world and pos (on change, else every 3 s), the right margin
 // (#roster, #hud, #qr, #resting) and the operator keys
@@ -12,6 +12,7 @@ import * as margins from './margins.js';
 import * as artwork from './artwork.js';
 import * as enrich from './enrich.js';
 import * as models from './models3d.js';
+import { apiHeaders } from '../shared/byok.js';
 import {
   MAX_PLAYERS, HB_MS, INPUT_STALE_MS, ORIGINAL_COOLDOWN_MS, ORIGINAL_MS, ARTWORK_COOLDOWN_MS, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN, hubUrl,
   PLAYER_IDLE_MS, JUDGE_IDLE_MS, JUDGE_RESERVE,
@@ -105,12 +106,34 @@ export function posMsg(pid, figures, who) {
   };
 }
 
-// The verb's answer at an object: its label and its description (whitespace collapsed, at most 240 characters),
-// or a plain line when the reading has none.
+// The verb's answer at an object: its label, its description (whitespace collapsed, at most 240 characters) or a
+// plain line when the reading has none, and its index into scene.objects (what the phone's Listen sends back).
 export const NO_DESCRIPTION = 'No description for this one yet.';
-export function describeMsg(label, description) {
-  const text = typeof description === 'string' ? description.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
-  return { t: 'describe', label: typeof label === 'string' ? label : null, text: text || NO_DESCRIPTION };
+const cleanDescription = (d) => typeof d === 'string' ? d.replace(/\s+/g, ' ').trim().slice(0, 240) : '';
+export function describeMsg(label, description, index) {
+  const text = cleanDescription(description);
+  // No description, no index: the phone shows Listen only with an index, so it never offers a voice it cannot get.
+  return { t: 'describe', label: typeof label === 'string' ? label : null, text: text || NO_DESCRIPTION,
+    index: text && Number.isInteger(index) ? index : null };
+}
+
+// panel listen: the object at `value` in this scene and the text its card shows, or null (no such object, or no description).
+export function listenTarget(value, scene) {
+  const objs = scene && Array.isArray(scene.objects) ? scene.objects : [];
+  const o = Number.isInteger(value) && value >= 0 ? objs[value] : null, text = o ? cleanDescription(o.description) : '';
+  return text ? { index: value, text } : null;
+}
+
+// A new /api/speak request from this phone: none of its own in flight, and its last one at least `gapMs` ago.
+export const listenDue = (p, now, gapMs) => !p.speaking && now - (p.lastListen ?? -Infinity) >= gapMs;
+
+// /api/speak's answer -> {url} (https or site-relative) or {url:null, reason}: 'off' for the server's off or a hub
+// with no API (404), 'capped' for its hourly cap, else 'error'.
+export function speechResult(status, body) {
+  const url = status === 200 && body && typeof body.url === 'string' && /^(https:\/\/|\/(?![/\\]))/i.test(body.url) ? body.url : null;
+  if (url) return { url };
+  const said = status === 200 && body ? body.reason : status === 404 ? 'off' : 'error';
+  return { url: null, reason: said === 'off' || said === 'capped' ? said : 'error' };
 }
 /* pure:end */
 
@@ -124,10 +147,16 @@ const els = Object.fromEntries(['roster', 'hud', 'qr', 'resting'].map((id) => [i
 
 const KICK_LIMITS = { idle: PLAYER_IDLE_MS, judgeIdle: JUDGE_IDLE_MS };
 const POS_KEEPALIVE_MS = 3000; // an unchanged pos is re-sent this often
+const LISTEN_GAP_MS = 3000, SPEAK_FETCH_MS = 30000; // one new /api/speak per phone per 3 s; the function's maxDuration is 30 s
 
 // phone pid -> {name, color, joinedAt, lastInput, lastActive, moving, away, rtts, kicked, guest, preJ, near, lastArtwork,
-// inside, worldSent (JSON of the last world told to it), lastPos (JSON of the last pos), lastPosAt}
+// inside, worldSent (JSON of the last world told to it), lastPos (JSON of the last pos), lastPosAt,
+// speaking (its /api/speak is in flight), lastListen, waiting (the speech job it waits on)}
 const players = new Map();
+// The narration of this scene's objects: index -> Promise<{url} | {url:null, reason}>, shared by every phone. A url
+// stays until the next scene; a failure is dropped so a later Listen asks again. sceneGen drops answers from an old scene.
+const speech = new Map();
+let sceneGen = 0;
 let ws = null, open = false, hubSeen = false, closedAt = performance.now(), stopped = '', backoff = 500, retry = 0, rollT = 0, rollWait = 0;
 let fallback = false, hub = null, joinUrl = '', judge = false, hudOpen = false, lastOriginal = -Infinity;
 
@@ -292,9 +321,42 @@ function leave(pid) {
 
 const readout = (pid, text) => tell(pid, { t: 'readout', text });
 
+async function speak(text) {
+  try {
+    const headers = { 'content-type': 'application/json', ...apiHeaders() };
+    if (token) headers['x-host-token'] = token;
+    const signal = AbortSignal.timeout ? AbortSignal.timeout(SPEAK_FETCH_MS) : undefined;
+    const res = await fetch('/api/speak', { method: 'POST', headers, body: JSON.stringify({ text }), signal });
+    return speechResult(res.status, res.status === 200 ? await res.json() : null);
+  } catch { return { url: null, reason: 'error' }; }
+}
+
+// panel listen: the narration of one described object, cached per scene, else one POST /api/speak for it. Every
+// listen is answered with {t:'speech', index, url} (url null plus a reason), so the phone's Preparing… always ends.
+function listen(pid, p, value, now) {
+  const target = listenTarget(value, game.scene());
+  if (!target) return tell(pid, { t: 'speech', index: value, url: null, reason: 'error' });
+  const gen = sceneGen;
+  let job = speech.get(target.index);
+  if (job && p.waiting === job) return; // a repeat tap while its answer is on the way
+  if (!job) {
+    if (!listenDue(p, now, LISTEN_GAP_MS)) return tell(pid, { t: 'speech', index: target.index, url: null, reason: 'capped' });
+    p.speaking = true; p.lastListen = now;
+    job = speak(target.text);
+    speech.set(target.index, job);
+    job.then((r) => { p.speaking = false; if (!r.url && speech.get(target.index) === job) speech.delete(target.index); });
+  }
+  p.waiting = job;
+  job.then((r) => {
+    if (p.waiting === job) p.waiting = null;
+    if (gen === sceneGen) tell(pid, { t: 'speech', index: target.index, ...r }); // a new scene closed that card
+  });
+}
+
 function panel(pid, kind, value) {
   const p = players.get(pid), now = performance.now();
   p.lastActive = now;
+  if (kind === 'listen') return listen(pid, p, value, now);
   if (kind === 'inside') {
     // shortcut: no per-phone throttle on the world reply; the relay's 20 messages a second per phone bounds a repeater.
     p.inside = value === 1 || value === 2;
@@ -328,12 +390,13 @@ game.onHotspot((e) => {
     if (p) p.near = label;
     tell(e.pid, { t: 'near', label });
   } else if (e?.type === 'describe') { // the verb at an object (pid 0, the keyboard, has no phone to tell)
-    const msg = describeMsg(label, e.description);
+    const msg = describeMsg(label, e.description, e.index);
     audio.play('describe', { label, kind: e.kind });
     margins.showDescription(msg.label, msg.text);
     tell(e.pid, msg);
   } else if (e?.type === 'layer') margins.showPlatforms(e.name === 'network');
   else if (e?.type === 'scene' || e?.type === 'enriched') { // enriched: a depth_url or model_url landed on this scene
+    if (e.type === 'scene') { sceneGen++; speech.clear(); } // enriched keeps the objects and their descriptions
     const msg = worldMsg(game.scene()), json = JSON.stringify(msg);
     for (const [pid, p] of players) if (p.inside && tell(pid, msg)) p.worldSent = json;
   }

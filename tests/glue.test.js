@@ -165,11 +165,46 @@ test('pos payload: my figure, my near label, every other seated figure with its 
   assert.equal(g.posMsg(9, figures, who), null); // a figure but no seat
 });
 
-test('describe: the label and the description, cleaned and capped, else the plain line', () => {
-  assert.deepEqual(g.describeMsg('river', '  A calm   river,\n painted thin. '), { t: 'describe', label: 'river', text: 'A calm river, painted thin.' });
+test('describe: the label, the description cleaned and capped (else the plain line) and the object index', () => {
+  assert.deepEqual(g.describeMsg('river', '  A calm   river,\n painted thin. ', 2), { t: 'describe', label: 'river', text: 'A calm river, painted thin.', index: 2 });
   for (const none of [undefined, null, '', '   \n', 42]) {
-    assert.deepEqual(g.describeMsg('moon', none), { t: 'describe', label: 'moon', text: 'No description for this one yet.' }, String(none));
+    assert.deepEqual(g.describeMsg('moon', none, 0), { t: 'describe', label: 'moon', text: 'No description for this one yet.', index: null }, String(none));
   }
   assert.equal(g.describeMsg('sky', 'x'.repeat(300)).text.length, 240);
   assert.equal(g.describeMsg(undefined, 'Two trees.').label, null);
+  for (const bad of [undefined, -0.5, 1.5, '1', NaN]) assert.equal(g.describeMsg('sky', 'Blue.', bad).index, null, String(bad));
+});
+
+test('listen target: an object of this scene with a description, and the text its card shows', () => {
+  const scene = { objects: [{ label: 'river', description: '  A calm   river. ' }, { label: 'moon' }, { label: 'sky', description: 'x'.repeat(300) }, null] };
+  assert.deepEqual(g.listenTarget(0, scene), { index: 0, text: 'A calm river.' });
+  assert.equal(g.listenTarget(2, scene).text, g.describeMsg('sky', 'x'.repeat(300)).text); // the same 240 characters as the card
+  for (const v of [1, 3, 4, -1, 0.5, NaN, '0', null]) assert.equal(g.listenTarget(v, scene), null, String(v));
+  assert.equal(g.listenTarget(0, null), null); // no scene (the boot Turner)
+  assert.equal(g.listenTarget(0, { objects: 'x' }), null);
+});
+
+test('listen due: one /api/speak per phone at a time, and at most one per 3 s', () => {
+  assert.equal(g.listenDue({}, 0, 3000), true); // never asked
+  assert.equal(g.listenDue({ lastListen: -Infinity }, 0, 3000), true);
+  assert.equal(g.listenDue({ speaking: true }, 99999, 3000), false);
+  assert.equal(g.listenDue({ lastListen: 1000 }, 3999, 3000), false);
+  assert.equal(g.listenDue({ lastListen: 1000 }, 4000, 3000), true);
+  assert.equal(g.listenDue({ lastListen: 1000, speaking: false }, 9000, 3000), true);
+});
+
+test('speech result: a usable url, else null with off, capped or error', () => {
+  const blob = 'https://x.public.blob.vercel-storage.com/speech/ab.mp3';
+  assert.deepEqual(g.speechResult(200, { url: blob }), { url: blob });
+  assert.deepEqual(g.speechResult(200, { url: '/speech/ab.mp3' }), { url: '/speech/ab.mp3' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'off' }), { url: null, reason: 'off' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'capped' }), { url: null, reason: 'capped' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'error' }), { url: null, reason: 'error' });
+  assert.deepEqual(g.speechResult(200, { url: null, reason: 'the key is sk_123' }), { url: null, reason: 'error' }); // never echoed
+  assert.deepEqual(g.speechResult(404, null), { url: null, reason: 'off' }); // no API on this hub
+  for (const s of [400, 401, 405, 500]) assert.deepEqual(g.speechResult(s, null), { url: null, reason: 'error' }, String(s));
+  for (const bad of ['http://x/a.mp3', '//evil.example/a.mp3', '/\\evil/a.mp3', 'javascript:alert(1)', 'data:audio/mpeg;base64,AA', '', 42]) {
+    assert.deepEqual(g.speechResult(200, { url: bad }), { url: null, reason: 'error' }, String(bad));
+  }
+  assert.deepEqual(g.speechResult(200, null), { url: null, reason: 'error' });
 });
