@@ -90,18 +90,90 @@ function near(label) {
   verb.setAttribute('aria-disabled', on ? 'false' : 'true');
 }
 
-// The verb's answer ({t:'describe', label, text}): a calm card under the verb, and over the inside view while it is
-// open. d is {head, text}, or null to close it; it closes itself after 20 s.
+// The verb's answer ({t:'describe', label, text, index}): a calm card under the verb, and over the inside view while it
+// is open. d is {head, text, index}, or null to close it; it closes itself 20 s after it opens or its voice ends.
 const DESC_MS = 20000;
 let desc = null, descT;
 function describe(d) {
   if (!d && !desc) return;
-  desc = d; clearTimeout(descT);
+  desc = d;
+  hush(); // a new card or none: its voice stops
   $('desc').hidden = !d; $('walk').classList.toggle('described', !!d);
-  if (d) { $('descH').textContent = d.head; $('descP').textContent = d.text; descT = setTimeout(() => describe(null), DESC_MS); }
+  if (d) { $('descH').textContent = d.head; $('descP').textContent = d.text; }
   if (inside) inside.describe(d);
+  paintVoice();
+}
+function armDesc() {
+  clearTimeout(descT);
+  if (desc) descT = setTimeout(() => describe(null), DESC_MS);
 }
 $('descX').onclick = () => describe(null);
+
+// ---- Listen: the card read aloud, only on a tap. The host asks /api/speak and answers {t:'speech', index, url} ----
+// One audio element, so one clip at a time; a silent clip played inside the tap unlocks it for iOS's later play().
+const SILENT = 'data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+const SPEECH_MS = 35000; // the host's own /api/speak wait is 30 s, and it always answers
+const VOICE = { idle: ['Listen', 'Listen to the description'], wait: ['Preparing…', 'Preparing the voice'], play: ['Stop', 'Stop the description'] };
+const voice = new Audio(), voiced = new Map(); // voiced: index|text -> url, so a repeat tap asks nothing
+let voiceSt = 'idle', voiceGen = 0, asked = null, askedT, askT;
+const voiceKey = (d) => d.index + '|' + d.text;
+const okVoiceUrl = (u) => typeof u === 'string' && u.length <= 2048 && /^(https:\/\/|\/(?![/\\]))/i.test(u);
+function setVoice(s) {
+  voiceSt = s;
+  if (s === 'idle') armDesc(); else clearTimeout(descT); // the card never closes on its own mid-voice
+  paintVoice();
+}
+// Both cards' Listen buttons (the walk screen's and the inside view's) show the one voice's state.
+function paintVoice() {
+  const v = VOICE[voiceSt], off = !desc || desc.index === null;
+  for (const b of document.querySelectorAll('.desc-l')) {
+    b.hidden = off; b.setAttribute('data-v', voiceSt); b.setAttribute('aria-label', v[1]);
+    b.querySelector('span').textContent = v[0];
+  }
+}
+function hush() {
+  voiceGen++; clearTimeout(askedT); clearTimeout(askT); asked = null;
+  voice.pause();
+  setVoice('idle');
+}
+function voiceFail() { hush(); toast('The voice isn’t available right now'); }
+function play(url) {
+  const g = ++voiceGen;
+  voice.src = url;
+  setVoice('play');
+  const p = voice.play();
+  if (p && p.then) p.then(null, () => { if (g === voiceGen) voiceFail(); });
+}
+voice.onended = () => { if (voiceSt === 'play') setVoice('idle'); };
+voice.onerror = () => { if (voiceSt === 'play') voiceFail(); };
+function askVoice() { // the send can miss a beat (rate headroom while the pad is held, a socket switch): try again
+  if (asked && !send({ t: 'panel', kind: 'listen', value: asked.index })) askT = setTimeout(askVoice, 250);
+}
+function listen() {
+  if (!desc || desc.index === null || voiceSt === 'wait') return;
+  if (voiceSt === 'play') return hush(); // Stop
+  const url = voiced.get(voiceKey(desc));
+  if (url) return play(url); // inside the tap: no unlock needed
+  voice.src = SILENT;
+  const p = voice.play(), g = voiceGen;
+  if (p && p.then) p.then(() => { if (g === voiceGen && voiceSt === 'wait') voice.pause(); }, () => {});
+  else voice.pause();
+  asked = { index: desc.index, key: voiceKey(desc) };
+  setVoice('wait');
+  askedT = setTimeout(voiceFail, SPEECH_MS);
+  askVoice();
+}
+function speech(m) {
+  if (!asked || m.index !== asked.index) return; // an answer for a card that has closed
+  const url = okVoiceUrl(m.url) ? m.url : null, key = asked.key;
+  clearTimeout(askedT); clearTimeout(askT); asked = null;
+  if (!url) return voiceFail();
+  if (voiced.size >= 32) voiced.clear(); // shortcut: forgets every url past 32 objects, fine for a few scenes a visit
+  voiced.set(key, url);
+  play(url);
+}
+$('descL').onclick = listen;
+addEventListener('pagehide', hush);
 
 function toast(text) {
   const t = $('toast');
@@ -276,8 +348,14 @@ function onMsg(m) {
   else if (t === 'near') near(m.label);
   else if (t === 'readout') { if (m.text) toast(String(m.text)); }
   else if (t === 'describe') {
-    if (typeof m.text === 'string' && m.text) describe({ head: typeof m.label === 'string' && m.label ? m.label.slice(0, 40) : 'This part of the picture', text: m.text.slice(0, 240) });
+    if (typeof m.text === 'string' && m.text) {
+      describe({
+        head: typeof m.label === 'string' && m.label ? m.label.slice(0, 40) : 'This part of the picture', text: m.text.slice(0, 240),
+        index: Number.isInteger(m.index) && m.index >= 0 ? m.index : null, // null (an older host): no Listen
+      });
+    }
   }
+  else if (t === 'speech') speech(m);
   else if (t === 'world' || t === 'pos') {
     if (inside) inside.msg(m);
     // pos for a closed view: the host missed our Back, so say it again (at most every 5 s)
@@ -376,9 +454,9 @@ insideBtn.onclick = () => {
         ask: () => send({ t: 'panel', kind: 'inside', value: 1 }),
         reassert: () => send({ t: 'panel', kind: 'inside', value: 2 }),
         look: () => send({ t: 'panel', kind: 'look', value: 1 }),
-        back: () => leaveInside(true), toast, closeDesc: () => describe(null),
+        back: () => leaveInside(true), toast, closeDesc: () => describe(null), listen,
       });
-      if (desc) inside.describe(desc);
+      if (desc) { inside.describe(desc); paintVoice(); }
     })
     .catch(() => toast('Couldn’t open the inside view; try again'))
     .then(() => { insideBtn.disabled = false; insideLabel.textContent = INSIDE_LABEL; });

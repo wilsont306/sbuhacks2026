@@ -99,6 +99,8 @@ function gained(prev, next, d, loaded) {
 const CHEV_L = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4l-8 8 8 8"/></svg>';
 const FORWARD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l7-7 7 7M5 19l7-7 7 7"/></svg>';
 const U_TURN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21V10a4 4 0 0 1 8 0v7M12 13l4 4 4-4"/></svg>';
+// join.html's #descL; main.js shows it and paints its state (it owns the one voice)
+const LISTEN = '<button type="button" class="desc-l" aria-label="Listen to the description" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 5.5a9 9 0 0 1 0 13"/></svg><span aria-hidden="true">Listen</span></button>';
 const HTML = `<canvas class="in-gl" aria-hidden="true"></canvas>
 <div class="in-top">
   <button type="button" class="in-back">${CHEV_L}Back</button>
@@ -111,13 +113,14 @@ const HTML = `<canvas class="in-gl" aria-hidden="true"></canvas>
   <button type="button" class="verb in-verb" aria-disabled="true">Walk to something</button>
   <button type="button" class="in-round in-turn" aria-label="Turn around">${U_TURN}</button>
 </div>
-<div class="desc in-desc" role="status" hidden><div class="desc-head"><h2></h2><button type="button" class="desc-x">Close</button></div><p></p></div>`;
+<div class="desc in-desc" role="status" hidden><div class="desc-head"><h2></h2><button type="button" class="desc-x">Close</button></div>${LISTEN}<p></p></div>`;
 
 // ctx: {setLx(v), setA(v)} (the pad's own input, so the heartbeat and release rules are the pad's), ask() (sends
 // {t:'panel', kind:'inside', value:1}), reassert() (value 2: the host resends the world only if it changed), look()
 // (sends {t:'panel', kind:'look', value:1}, activity for the idle kick; returns whether it went), back() (main leaves:
-// sends value 0 and calls close), toast(text), closeDesc() (the description card's Close: main closes it everywhere).
-// Returns {msg(m), input(lx, a), again(), describe(d), close()}; d is {head, text}, or null to hide the card.
+// sends value 0 and calls close), toast(text), closeDesc() (the description card's Close: main closes it everywhere),
+// listen() (the card's Listen: main plays or stops the voice and paints this button too).
+// Returns {msg(m), input(lx, a), again(), describe(d), close()}; d is {head, text, index}, or null to hide the card.
 export function open(ctx) {
   const root = document.createElement('section');
   root.className = 'inside';
@@ -452,6 +455,7 @@ export function open(ctx) {
   q('.in-back').onclick = ctx.back;
   q('.in-out').onclick = ctx.back;
   q('.desc-x').onclick = ctx.closeDesc;
+  q('.desc-l').onclick = ctx.listen;
   // Keys: ArrowUp held walks, ArrowDown or T turns around, Escape goes back.
   function onKey(e) {
     if (e.key === 'Escape') return ctx.back();

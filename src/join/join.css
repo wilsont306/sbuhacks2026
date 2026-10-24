@@ -107,6 +107,11 @@ main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction
 .desc h2 { flex: 1; min-width: 0; margin: 8px 12px 0 0; font: 400 24px/1.15 var(--font-display); overflow-wrap: break-word; }
 .desc p { margin: 8px 0 0; font-size: 18px; line-height: 1.4; }
 .desc-x { flex: none; padding: 6px 16px; border-color: var(--ink); color: var(--ink); font-size: 18px; }
+/* Listen: an outlined ink pill with a speaker; dashed while the voice is prepared, filled ink while it plays */
+.desc-l { display: flex; align-items: center; margin: 12px 0 4px; padding: 6px 18px 6px 12px; border-color: var(--ink); color: var(--ink); font-size: 18px; }
+.desc-l svg { flex: none; width: 24px; height: 24px; margin-right: 8px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.desc-l[data-v="wait"] { border-style: dashed; cursor: default; }
+.desc-l[data-v="play"] { background: var(--ink); color: var(--cream); }
 
 #art { grid-area: art; text-align: center; }
 #insideBtn { grid-area: inside; }
