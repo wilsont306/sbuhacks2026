@@ -32,6 +32,7 @@ export function createHandler(deps = {}) {
     timeoutMs = TIMEOUT_MS,
     // Imported on use, like api/interpret.js, so a broken Snowflake module only fails its own check.
     snowflake = () => import('../lib/snowflake.js'),
+    blob = () => import('@vercel/blob'),
   } = deps;
   const recent = new Map(); // client -> times of its checks in the last minute
 
@@ -131,9 +132,15 @@ export function createHandler(deps = {}) {
     if (!isHost(req)) return TV_ONLY;
     if (service === 'storage') {
       // A newer store connects by BLOB_STORE_ID (OIDC, which @vercel/blob uses on its own) instead of a token.
-      return String(env.BLOB_READ_WRITE_TOKEN ?? '').trim() || String(env.BLOB_STORE_ID ?? '').trim()
-        ? { ok: true, using: 'team', detail: 'Blob storage is connected' }
-        : { ok: false, using: 'none', detail: 'No Blob store connected' };
+      if (!(String(env.BLOB_READ_WRITE_TOKEN ?? '').trim() || String(env.BLOB_STORE_ID ?? '').trim()))
+        return { ok: false, using: 'none', detail: 'No Blob store connected' };
+      // Look up a path nothing writes: "not found" proves the store answers these credentials, and nothing is stored.
+      const r = await within(Promise.resolve().then(async () => {
+        const b = await blob();
+        try { await b.head('check/never-written.txt'); return 'ok'; } catch (err) { return err instanceof b.BlobNotFoundError ? 'ok' : 'refused'; }
+      }).catch(() => 'refused'));
+      if (r === TIMED_OUT) return { ok: false, using: 'team', detail: `Blob storage did not answer in ${Math.ceil(timeoutMs / 1000)} s` };
+      return r === 'ok' ? { ok: true, using: 'team', detail: 'Blob storage is connected' } : { ok: false, using: 'team', detail: 'Blob storage refused the check' };
     }
     let sf;
     try { sf = await snowflake(); } catch { return { ok: false, using: 'none', detail: 'Snowflake support failed to load' }; }

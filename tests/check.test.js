@@ -34,9 +34,13 @@ function fakeRes() {
   };
 }
 
-function make({ env = {}, routes, snowflake, now, timeoutMs = 40 } = {}) {
+// A fake @vercel/blob whose head() answers like a working store asked for a path nobody wrote.
+class FakeNotFound extends Error {}
+const workingBlob = async () => ({ BlobNotFoundError: FakeNotFound, head: async () => { throw new FakeNotFound('not found'); } });
+
+function make({ env = {}, routes, snowflake, blob = workingBlob, now, timeoutMs = 40 } = {}) {
   const f = fakeFetch(routes);
-  const handler = createHandler({ env, fetch: f.fetch, now, timeoutMs, snowflake: snowflake || (async () => ({ configured: () => false })) });
+  const handler = createHandler({ env, fetch: f.fetch, now, timeoutMs, blob, snowflake: snowflake || (async () => ({ configured: () => false })) });
   const seen = [];
   const ask = async (service, { headers = {}, ip = '10.0.0.1', method = 'POST', body } = {}) => {
     const res = fakeRes();
@@ -232,10 +236,17 @@ test('check snowflake: a PAT-only env (no user, no key) passes the real configur
   for (const s of [...seen, ...warn.mock.calls.map((c) => c.arguments.join(' '))]) assert.ok(!s.includes(PAT.slice(0, 8)), s);
 });
 
-test('check storage: whether BLOB_READ_WRITE_TOKEN is set', async () => {
-  assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: 'fake-blob-token' } }).ask('storage')).body, { ok: true, using: 'team', detail: 'Blob storage is connected' });
+test('check storage: a token or a store id, then a lookup the store must answer (not found is fine)', async () => {
+  const connected = { ok: true, using: 'team', detail: 'Blob storage is connected' };
+  assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: 'fake-blob-token' } }).ask('storage')).body, connected);
   assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: '  ' } }).ask('storage')).body, { ok: false, using: 'none', detail: 'No Blob store connected' });
-  assert.deepEqual((await make({ env: { BLOB_STORE_ID: 'store_fake123' } }).ask('storage')).body, { ok: true, using: 'team', detail: 'Blob storage is connected' });
+  assert.deepEqual((await make({ env: { BLOB_STORE_ID: 'store_fake123' } }).ask('storage')).body, connected);
+  const env = { BLOB_STORE_ID: 'store_fake123' };
+  const refused = { ok: false, using: 'team', detail: 'Blob storage refused the check' };
+  assert.deepEqual((await make({ env, blob: async () => ({ BlobNotFoundError: FakeNotFound, head: async () => { throw new Error('no credentials'); } }) }).ask('storage')).body, refused);
+  assert.deepEqual((await make({ env, blob: async () => { throw new Error('module failed'); } }).ask('storage')).body, refused);
+  assert.deepEqual((await make({ env, blob: async () => ({ BlobNotFoundError: FakeNotFound, head: () => new Promise(() => {}) }) }).ask('storage')).body,
+    { ok: false, using: 'team', detail: 'Blob storage did not answer in 1 s' });
 });
 
 test('check: 10 checks a minute per client, then 429; other clients and the next minute are fine', async () => {
