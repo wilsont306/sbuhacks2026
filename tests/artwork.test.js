@@ -1,9 +1,9 @@
-// src/host/gallery.js: the mirror, the gallery merge, the save poll verdict, the failure messages and grid moves.
+// src/host/gallery.js: the mirror, the gallery merge, the save poll verdict, the failure messages, shelf moves and peeks.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readMirror, trimMirror, mirrorItem, mergeGallery, pollVerdict, reasonMessage, moveSel, isToday, safeUrl, isSceneUrl,
-  storeLine, badgeText, chipText, MIRROR_CAP, MIRROR_SCENE_MAX, GALLERY_CARDS, POLL_AT,
+  readMirror, trimMirror, mirrorItem, mergeGallery, pollVerdict, reasonMessage, isToday, safeUrl, isSceneUrl,
+  moveShelf, peekLayers, MIRROR_CAP, MIRROR_SCENE_MAX, GALLERY_CARDS, POLL_AT, PEEK_Z,
 } from '../src/host/gallery.js';
 
 const NOW = new Date(2026, 9, 24, 15, 0).getTime();
@@ -110,31 +110,43 @@ test('reasonMessage covers busy, quota, storage and everything else', () => {
   for (const r of ['timeout', 'no_key', 'offline', undefined]) assert.equal(reasonMessage(r), "Couldn't read this one; walking on the flat painting");
 });
 
-test('storeLine names the local-only cases', () => {
-  assert.match(storeLine(null), /Checking/);
-  assert.match(storeLine({ ok: true, projects: [], configured: true }), /Snowflake/);
-  assert.match(storeLine({ ok: true, projects: [], configured: false }), /^Local only/);
-  assert.match(storeLine({ ok: false, configured: true, error: 'unavailable', projects: [] }), /^Local only/);
-  assert.match(storeLine(undefined), /^Local only/);
+test('a sample card carries its short artist line; a project has none', () => {
+  const cards = mergeGallery({ samples: [{ id: 's1', n: 1, scene: '/a.json', by: 'Turner, 1844' }], local: [item('a')] });
+  assert.deepEqual(cards.map((c) => [c.id, c.by]), [['a', ''], ['s1', 'Turner, 1844']]);
 });
 
-test('badges and chips are words, not colours', () => {
-  assert.equal(badgeText('saved'), 'Saved to Snowflake');
-  assert.equal(badgeText('local'), 'Local only');
-  assert.equal(badgeText('sample'), 'Hand-corrected');
-  assert.equal(chipText('phone'), 'Phone');
-  assert.equal(chipText('drop'), 'Laptop');
-  assert.equal(chipText('sample'), 'Sample');
+test('moveShelf walks along a shelf, hops to the nearest non-empty one, and stops at edges', () => {
+  const sizes = [4, 0, 3];
+  assert.deepEqual(moveShelf({ s: 0, i: 0 }, 'ArrowRight', sizes), { s: 0, i: 1 });
+  assert.deepEqual(moveShelf({ s: 0, i: 0 }, 'ArrowLeft', sizes), { s: 0, i: 0 });
+  assert.deepEqual(moveShelf({ s: 0, i: 3 }, 'ArrowRight', sizes), { s: 0, i: 3 });
+  assert.deepEqual(moveShelf({ s: 0, i: 3 }, 'ArrowDown', sizes), { s: 2, i: 2 }, 'skips the empty shelf, clamps to its end');
+  assert.deepEqual(moveShelf({ s: 2, i: 1 }, 'ArrowUp', sizes), { s: 0, i: 1 });
+  assert.deepEqual(moveShelf({ s: 2, i: 1 }, 'ArrowDown', sizes), { s: 2, i: 1 });
+  assert.deepEqual(moveShelf({ s: 0, i: 2 }, 'Enter', sizes), { s: 0, i: 2 });
+  assert.deepEqual(moveShelf({ s: 1, i: 5 }, 'ArrowRight', sizes), { s: 0, i: 0 }, 'a stale selection lands on the first item');
+  assert.deepEqual(moveShelf({ s: 0, i: 0 }, 'ArrowDown', [0, 0]), { s: 0, i: 0 });
 });
 
-test('moveSel walks a 4-wide grid and stops at the edges', () => {
-  assert.equal(moveSel(0, 'ArrowRight', 10), 1);
-  assert.equal(moveSel(0, 'ArrowLeft', 10), 0);
-  assert.equal(moveSel(1, 'ArrowDown', 10), 5);
-  assert.equal(moveSel(8, 'ArrowDown', 10), 8);
-  assert.equal(moveSel(5, 'ArrowUp', 10), 1);
-  assert.equal(moveSel(9, 'ArrowRight', 10), 9);
-  assert.equal(moveSel(3, 'Enter', 10), 3);
-  assert.equal(moveSel(7, 'ArrowLeft', 3), 2);
-  assert.equal(moveSel(0, 'ArrowRight', 0), 0);
+test('peekLayers lifts objects far first along their masks and leaves the receding surfaces', () => {
+  const layers = peekLayers({ objects: [
+    { label: 'Dog', kind: 'animal', depth: 0, motion: 'bob', mask: [[100, 500], [300, 500], [200, 900]], box: [100, 500, 300, 900] },
+    { label: 'Sky', kind: 'sky', depth: 1, box: [0, 0, 1000, 400] },
+    { label: 'Sun', kind: 'celestial', depth: 1, motion: 'spin', box: [700, 50, 900, 250] },
+    { label: 'Bad', kind: 'object', mask: [[1, 2]] },
+    { label: 'Speck', kind: 'animal', box: [500, 500, 520, 520] },
+  ] });
+  assert.deepEqual(layers.map((l) => l.label), ['Sun', 'Dog']);
+  assert.equal(layers[0].z, PEEK_Z[0]);
+  assert.equal(layers[1].z, PEEK_Z[1]);
+  assert.equal(layers[0].clip, 'polygon(70% 5%, 90% 5%, 90% 25%, 70% 25%)', 'no mask: the box');
+  assert.equal(layers[1].clip, 'polygon(10% 50%, 30% 50%, 20% 90%)');
+  assert.equal(layers[1].origin, '20% 90%');
+  assert.deepEqual(layers[1].points, [[100, 500], [300, 500], [200, 900]]);
+  assert.equal(layers[1].surface, false);
+  const all = peekLayers({ objects: [{ label: 'Sky', kind: 'sky', depth: 1, box: [0, 0, 1000, 400] }, { label: 'Dog', kind: 'animal', box: [100, 500, 300, 900] }] }, { surfaces: true });
+  assert.deepEqual(all.map((l) => [l.label, l.surface]), [['Sky', true], ['Dog', false]], 'surfaces on request, marked');
+  assert.equal(layers[1].motion, 'bob');
+  assert.deepEqual(peekLayers(null), []);
+  assert.deepEqual(peekLayers({ objects: 'x' }), []);
 });

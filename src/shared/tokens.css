@@ -32,6 +32,17 @@
   --slot-6: #6b7280;
   --slot-keyboard: #f3ecdc;   /* pid 0, the kiosk keyboard player */
 
+  /* the gallery's railway: chocolate-and-cream carriages on a night line, gold-leaf lettering, lit windows */
+  --rail-night: #0d171b;      /* sky over the line */
+  --rail-dusk: #1b3433;       /* the sky low down, behind the trains */
+  --livery: #5c2b20;          /* carriage lower panels; cream on it is 10:1, brass 4.7:1 */
+  --livery-deep: #34160f;     /* underframes, carriage interiors */
+  --rail: #9aa1a8;            /* steel rails, wheel tyres */
+  --sleeper: #3b2c21;         /* wooden sleepers */
+  --lamp: #ffcf73;            /* a lit carriage's lamp */
+  --demo: #2c4a37;            /* the how-it-works carriages: Brunswick green; cream on it is 8:1 */
+  --demo-deep: #18291f;       /* their interiors and underframes */
+
   --font-display: "IM Fell English", "Iowan Old Style", Georgia, serif;
   --font-ui: "Libre Franklin", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;

@@ -3,7 +3,9 @@
 // A visitor's own ElevenLabs key (the API box, src/shared/byok.js) rides along on /api/sfx as x-elevenlabs-key.
 import { apiHeaders, EVENT as KEYS_EVENT } from '../shared/byok.js';
 
-export const EVENTS = ['join', 'poke', 'appear', 'save', 'reset', 'gallery'];
+// The gallery's railway adds four: step (between carriages), door (a carriage's sidebar), punch (a ticket chosen) and
+// whistle (all aboard). A phone taking a seat already rings join.
+export const EVENTS = ['join', 'poke', 'appear', 'save', 'reset', 'gallery', 'step', 'door', 'punch', 'whistle'];
 export const GAIN = 0.3, PER_SCENE = 2, DAY_CAP = 25, POOL = 6, FETCH_MS = 25000;
 const MUTE_KEY = 'tt.mute', DAY_KEY = 'tt.sfxday';
 

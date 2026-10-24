@@ -3,3 +3,6 @@
 import './scene.js';
 import './glue.js';
 import './apibox.js';
+import { trackVisible } from './fit.js';
+
+trackVisible(); // host.css fits the frame to the part of the window that is on screen

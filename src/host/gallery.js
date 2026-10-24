@@ -1,13 +1,14 @@
 // Pure helpers for src/host/artwork.js (no DOM, no fetch): the localStorage mirror of today's projects, the gallery's
-// merge of samples, mirror and Snowflake list, the save-confirmation poll verdict, failure messages and grid moves.
-// tests/artwork.test.js covers them under node:test.
+// cards (the bundled samples, shaped by mergeGallery), the save-confirmation poll verdict, failure messages, shelf
+// moves and the 3D peek's cut-out layers. tests/artwork.test.js covers them under node:test.
 
 export const MIRROR_KEY = 'tt.projects';
 export const MIRROR_CAP = 50;
 // localStorage counts UTF-16 code units, so string length is the right measure here.
 export const MIRROR_SCENE_MAX = 60 * 1024;
 export const GALLERY_CARDS = 12;
-export const GALLERY_COLS = 4;
+// px a peek cut-out lifts off the picture at depth 1 (far) and 0 (nearest).
+export const PEEK_Z = [10, 64];
 // GET /api/projects?id= at these times after the scene lands; the save goes through waitUntil, so it trails the reply.
 export const POLL_AT = [3000, 10000, 30000];
 export const STATUS_MS = 6000;
@@ -56,14 +57,16 @@ export const mirrorItem = (scene, at = Date.now()) => ({
   scene, title_guess: scene.title_guess, at,
 });
 
-// Gallery cards: {id, title, image, at, source, saved: 'saved'|'local'|'sample', scene, scene_url, n}.
+// Gallery cards: {id, title, image, at, source, saved: 'saved'|'local'|'sample', scene, scene_url, n, by}; `by` is a
+// sample's short artist line from /samples/index.json, '' for projects.
 const card = (o) => ({
   id: o.id, title: str(o.title, 120) || 'Untitled', image: safeUrl(o.image), at: Number.isFinite(o.at) ? o.at : 0,
   source: ['drop', 'phone', 'sample'].includes(o.source) ? o.source : 'drop', saved: o.saved,
   scene: isObj(o.scene) ? o.scene : null, scene_url: safeUrl(o.scene_url), n: Number.isInteger(o.n) ? o.n : null,
+  by: str(o.by, 40),
 });
 
-const fromSample = (s) => card({ id: s.id, title: s.name, image: s.image, source: 'sample', saved: 'sample', scene_url: s.scene, n: s.n });
+const fromSample = (s) => card({ id: s.id, title: s.name, image: s.image, source: 'sample', saved: 'sample', scene_url: s.scene, n: s.n, by: s.by });
 const fromLocal = (e) => card({ id: e.id, title: e.title_guess || e.name, image: e.image_url, at: atOf(e.at), source: e.source || (isObj(e.scene) && e.scene.source), saved: 'local', scene: e.scene, scene_url: e.scene_url });
 const fromRemote = (p) => card({ id: p.id, title: p.title_guess || p.name, image: p.image_url, at: atOf(p.created_at), source: p.source, saved: 'saved', scene_url: p.scene_url });
 
@@ -83,13 +86,6 @@ export function mergeGallery({ samples = [], local = [], remote = [] } = {}, max
   return [...projects, ...sam];
 }
 
-// The Snowflake line over the gallery, from GET /api/projects's answer (null while it is in flight).
-export function storeLine(body) {
-  if (body === null) return 'Checking Snowflake…';
-  if (isObj(body) && body.ok === true && body.configured !== false) return 'Saved projects from Snowflake, and this laptop';
-  return isObj(body) && body.configured === false ? 'Local only: Snowflake is not set up here' : 'Local only: Snowflake is not answering';
-}
-
 // One save-confirmation poll: 'saved' on the row, 'local' when Snowflake is not configured at all, else 'wait'.
 export function pollVerdict(status, body) {
   if (status === 200 && isObj(body) && body.ok === true) return 'saved';
@@ -107,13 +103,45 @@ export function reasonMessage(reason) {
   }
 }
 
-export const chipText = (source) => (source === 'sample' ? 'Sample' : source === 'phone' ? 'Phone' : 'Laptop');
-export const badgeText = (saved) => (saved === 'saved' ? 'Saved to Snowflake' : saved === 'sample' ? 'Hand-corrected' : 'Local only');
 
-// The selected card after an arrow key on a grid of n cards, `cols` wide; other keys leave it.
-export function moveSel(i, key, n, cols = GALLERY_COLS) {
-  if (n <= 0) return 0;
-  const d = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[key] || 0;
-  const j = i + d;
-  return j >= 0 && j < n ? j : Math.min(Math.max(i, 0), n - 1);
+// The selection {s, i} after an arrow key over shelves holding `sizes` items: left and right along a shelf, up and
+// down to the same place (or the end) of the nearest non-empty shelf. Edges and other keys leave it.
+export function moveShelf(sel, key, sizes) {
+  const ok = (s) => Number.isInteger(s) && sizes[s] > 0;
+  if (!ok(sel.s)) { const s = sizes.findIndex((n) => n > 0); return { s: Math.max(s, 0), i: 0 }; }
+  const s = sel.s, i = Math.min(Math.max(sel.i, 0), sizes[s] - 1);
+  const dx = { ArrowLeft: -1, ArrowRight: 1 }[key] || 0, dy = { ArrowUp: -1, ArrowDown: 1 }[key] || 0;
+  if (dx) return { s, i: Math.min(Math.max(i + dx, 0), sizes[s] - 1) };
+  for (let t = s + dy; dy && t >= 0 && t < sizes.length; t += dy) if (ok(t)) return { s: t, i: Math.min(i, sizes[t] - 1) };
+  return { s, i };
+}
+
+// Planes that recede (as in maskDepth.js): the peek leaves them on the picture instead of lifting them as cards.
+const SURFACES = new Set(['sky', 'ground', 'water']);
+// Outlines under this area (image units squared, of 1e6) lift as specks, not objects; the peek leaves them flat.
+export const PEEK_MIN_AREA = 8000;
+const pct = (v) => `${Math.round(v) / 10}%`;
+const areaOf = (pts) => Math.abs(pts.reduce((a, [x, y], k) => { const [u, v] = pts[(k + 1) % pts.length]; return a + x * v - u * y; }, 0)) / 2;
+
+// The 3D peek's cut-outs from a validated scene, far first: each object but the receding surfaces, as its outline
+// points (image space) and a CSS clip-path along them in percent of the picture, a lift in px from its depth guess,
+// its motion, and a transform origin at its foot so a sway pivots where it stands. `surfaces` also returns the
+// receding planes, marked `surface`, for the sidebar's point-to-name areas (they are never lifted).
+export function peekLayers(scene, { surfaces = false } = {}) {
+  const objects = isObj(scene) && Array.isArray(scene.objects) ? scene.objects : [];
+  return objects.flatMap((o) => {
+    if (!isObj(o) || (!surfaces && SURFACES.has(o.kind))) return [];
+    const b = Array.isArray(o.box) && o.box.length === 4 ? o.box : null;
+    let pts = Array.isArray(o.mask) && o.mask.length >= 3 ? o.mask : b && [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
+    pts = (pts || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    if (pts.length < 3 || areaOf(pts) < PEEK_MIN_AREA) return [];
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const depth = Number.isFinite(o.depth) ? Math.min(1, Math.max(0, o.depth)) : 0.5;
+    return [{
+      label: str(o.label, 40), kind: str(o.kind, 20), motion: str(o.motion, 12) || 'none', depth, points: pts, surface: SURFACES.has(o.kind),
+      z: Math.round(PEEK_Z[0] + (1 - depth) * (PEEK_Z[1] - PEEK_Z[0])),
+      clip: `polygon(${pts.map(([x, y]) => `${pct(x)} ${pct(y)}`).join(', ')})`,
+      origin: `${pct((Math.min(...xs) + Math.max(...xs)) / 2)} ${pct(Math.max(...ys))}`,
+    }];
+  }).sort((a, b) => b.depth - a.depth);
 }
