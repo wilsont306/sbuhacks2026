@@ -3,7 +3,8 @@ rem One command for the kiosk: local fallback hub on port 80, then Chrome full s
 setlocal
 cd /d "%~dp0.."
 if exist .env for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do set "%%a=%%b"
-if not defined HUB_URL set "HUB_URL=https://toy-theatre-hub.fly.dev"
+rem HUB_URL is where the kiosk loads the host page: the Vercel production URL, else this laptop
+if not defined HUB_URL set "HUB_URL=http://localhost"
 if not exist dist\host.html call npm run build || exit /b 1
 set "PORT=80"
 start "toy-theatre hub" cmd /k node hub.js

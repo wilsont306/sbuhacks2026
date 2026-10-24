@@ -2,10 +2,10 @@
   "name": "toy-theatre",
   "private": true,
   "version": "0.1.0",
-  "description": "Living Blueprint: Toy Theatre, a gallery interactive for Turner's Rain, Steam, and Speed (SBUHacks 2026)",
+  "description": "Living Blueprint: Toy Theatre, any artwork as a phone-played 3D scene (SBUHacks 2026)",
   "type": "module",
   "engines": {
-    "node": ">=18.14"
+    "node": ">=20"
   },
   "scripts": {
     "dev": "vite",
@@ -13,10 +13,15 @@
     "hub": "node hub.js",
     "start": "node hub.js",
     "demo": "vite build && node hub.js",
-    "test": "node --test tests/"
+    "test": "node --test"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "2.74.0",
+    "@google/genai": "2.31.0",
+    "@vercel/blob": "2.8.2",
+    "@vercel/functions": "3.10.3",
     "express": "4.22.3",
+    "ioredis": "6.0.0",
     "ws": "8.22.0"
   },
   "devDependencies": {

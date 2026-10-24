@@ -1,0 +1,125 @@
+/* src/host/apibox.js's DOM: the API plug-in box (K) over the whole stage, z 11 (above #original's 10), and its API
+   button in the right margin. Prussian ground, cream paper cards with ink text, brass only for Test (the primary
+   action) and the focus ring. Stage overlay type keeps the 28 px floor; the margin button 22 px or more. Tokens only. */
+.api-layer {
+  position: absolute; inset: 0; z-index: 11; display: flex;
+  background: var(--prussian);
+  animation: api-fade var(--fade, 200ms) ease-out;
+}
+.api-layer[hidden] { display: none; }
+@keyframes api-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes api-pulse { from { opacity: 1; } to { opacity: .35; } }
+
+.api-box {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3, 24px);
+  padding: var(--space-4, 32px) 40px; color: var(--frame-ink); font: 400 var(--fs-body-tv)/1.3 var(--font-ui);
+}
+.api-box h2, .api-box h3, .api-box p, .api-box dl, .api-box dd { margin: 0; }
+
+/* Header: the title in display type, a one-line how-to, the close button */
+.api-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3, 24px);
+  padding-bottom: var(--space-2, 16px); border-bottom: 1px solid var(--rule-frame);
+}
+.api-top h2 { font: 400 48px/1.05 var(--font-display); color: var(--cream); }
+.api-sub { margin-top: var(--space-1, 8px); color: var(--frame-ink); }
+.api-close {
+  flex: none; width: 56px; height: 56px; padding: 0; border: 1px solid var(--rule-frame); border-radius: var(--radius-pill);
+  background: var(--card-frame); color: var(--frame-ink); font: 400 40px/1 var(--font-ui); cursor: pointer;
+}
+.api-close:hover { border-color: var(--frame-ink); }
+
+/* Cards: Gemini | ElevenLabs | Snowflake, Storage and the relay stacked */
+.api-grid {
+  flex: 1; min-height: 0; display: grid; gap: var(--space-3, 24px);
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1fr); align-items: start;
+}
+.api-col { display: flex; flex-direction: column; gap: var(--space-2, 16px); min-width: 0; }
+.api-card {
+  display: flex; flex-direction: column; gap: var(--space-1, 8px); min-width: 0; padding: var(--space-3, 24px);
+  border-radius: var(--radius-card, 8px); background: var(--cream); color: var(--ink); box-shadow: var(--shadow-card);
+}
+.api-team { padding: var(--space-2, 16px) var(--space-3, 24px); }
+.api-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-1, 8px) var(--space-2, 16px);
+  padding-bottom: var(--space-1, 8px); border-bottom: 1px solid var(--rule-ink);
+}
+.api-head h3 { font: 400 34px/1.15 var(--font-display); color: var(--ink); }
+.api-what, .api-using, .api-saved, .api-label { color: var(--ink-soft, var(--ink)); }
+.api-using { color: var(--ink); font-weight: 600; }
+.api-saved code, .api-credits, .api-rows dd { font-family: var(--font-mono); color: var(--ink); }
+.api-field { display: flex; flex-direction: column; gap: 4px; margin-top: var(--space-1, 8px); }
+/* Clamped, so a long answer can never push the cards into the footer */
+.api-detail { min-height: 1.3em; color: var(--ink); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.api-team .api-detail { -webkit-line-clamp: 2; }
+.api-team .api-detail:has(span:empty) { display: none; }
+.api-credits { display: block; }
+.api-credits:empty { display: none; }
+
+/* Status: a dot plus its word, so the state never rests on colour alone */
+.api-state { display: inline-flex; align-items: center; gap: var(--space-1, 8px); color: var(--ink); }
+.api-dot {
+  flex: none; width: 22px; height: 22px; border: 3px solid var(--ink-soft, var(--ink)); border-radius: var(--radius-pill);
+  background: transparent;
+}
+.api-dot[data-state="pending"] { border-style: dotted; border-color: var(--ink); animation: api-pulse 900ms ease-in-out infinite alternate; }
+.api-dot[data-state="ok"] { border: 2px solid var(--ink); background: var(--ok); }
+.api-dot[data-state="bad"] { border: 2px solid var(--ink); background: var(--bad); border-radius: 4px; } /* a square, not only a colour */
+
+/* Fields and buttons */
+.api-keyrow { display: flex; gap: var(--space-1, 8px); }
+.api-input, .api-select {
+  min-width: 0; min-height: 56px; padding: 8px 12px; border: 1px solid var(--ink-soft, var(--ink)); border-radius: var(--radius-card, 8px);
+  background: color-mix(in srgb, var(--ink) 5%, var(--cream)); color: var(--ink); font: 400 28px/1.2 var(--font-mono);
+}
+.api-input { flex: 1; }
+.api-input::placeholder { color: var(--ink-soft, var(--ink)); font-family: var(--font-ui); }
+.api-select { width: 100%; cursor: pointer; }
+.api-actions { display: flex; flex-wrap: wrap; gap: var(--space-1, 8px) var(--space-2, 16px); margin-top: var(--space-1, 8px); }
+.api-primary, .api-ghost {
+  min-height: 56px; padding: 8px 24px; border-radius: var(--radius-pill); font: 600 28px/1.2 var(--font-ui); cursor: pointer;
+}
+.api-primary { border: 0; background: var(--brass); color: var(--brass-ink); box-shadow: var(--shadow-card); }
+.api-ghost { flex: none; border: 1px solid var(--ink-soft, var(--ink)); background: transparent; color: var(--ink); }
+.api-ghost:hover { border-color: var(--ink); background: var(--rule-ink); }
+.api-team .api-ghost { min-height: 48px; padding: 4px 20px; }
+
+/* The relay's answer: name, then value in mono */
+.api-rows { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--space-2, 16px); }
+.api-rows:empty { display: none; }
+.api-rows dt { color: var(--ink-soft, var(--ink)); }
+.api-rows dd { overflow-wrap: anywhere; }
+
+/* Footer, on the Prussian ground */
+.api-foot { display: flex; flex-direction: column; gap: var(--space-1, 8px); padding-top: var(--space-2, 16px); border-top: 1px solid var(--rule-frame); }
+.api-foot-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1, 8px) var(--space-3, 24px); }
+.api-remember { display: inline-flex; align-items: center; gap: 12px; min-height: 56px; color: var(--cream); cursor: pointer; }
+.api-remember input { width: 28px; height: 28px; margin: 0; accent-color: var(--brass); cursor: pointer; }
+.api-on-frame { border-color: var(--rule-frame); color: var(--frame-ink); }
+.api-on-frame:hover { border-color: var(--frame-ink); background: var(--card-frame); }
+.api-foot-msg { color: var(--frame-ink); }
+.api-privacy { color: var(--frame-ink); }
+
+/* Focus: the brass ring, with an ink ring inside it so it also reads on cream */
+#tv #apiBox button:focus-visible, #tv #apiBox input:focus-visible, #tv #apiBox select:focus-visible {
+  outline: 3px solid var(--focus, var(--brass)); outline-offset: 3px; box-shadow: 0 0 0 3px var(--ink);
+}
+
+/* The right margin's API button: a quiet pill under the layer tag */
+.api-open {
+  flex: none; align-self: flex-start; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  min-height: var(--tap); max-width: 100%; padding: 4px 16px; border: 1px solid var(--rule-frame); border-radius: var(--radius-pill);
+  background: var(--card-frame); color: var(--frame-ink); font: 600 24px/1.2 var(--font-ui); cursor: pointer;
+}
+.api-open:hover, .api-open[aria-expanded="true"] { border-color: var(--frame-ink); }
+.api-open kbd {
+  padding: 0 6px; border: 1px solid var(--rule-frame); border-radius: 4px; font: 400 22px/1.2 var(--font-mono); color: var(--frame-ink);
+}
+.api-open-yours { font-weight: 400; font-size: 22px; color: var(--cream); }
+.api-open-yours[hidden] { display: none; }
+
+#tv.reduced .api-layer, #tv.reduced .api-dot { animation: none; }
+@media (prefers-reduced-motion: reduce) { .api-layer, .api-dot { animation: none; } }
+
+/* With the Wi-Fi and join QR codes both shown (Q fallback) the margin is full: the pill hides, K still opens the box. */
+.margin.right:has(#qr figure + figure) .api-open { display: none; }

@@ -1,48 +1,27 @@
-// Host glue: the hub socket, the player manager, plaque ownership (decided here and only here; the host
-// never trusts a phone), the margins (#roster, #hud, #qr, #resting) and the operator keys H, J, R, Q.
-// main.js imports scene.js first, so window.game already exists.
+// Host glue: the relay socket, the seats (src/host/slots.js), the player manager, the phones' panel kinds ('original'
+// and 'artwork'; decided here and only here, the host never trusts a phone), the scene's hotspot events (near, poke,
+// layer) relayed to phones, audio and margins, the right margin (#roster, #hud, #qr, #resting) and the operator keys
+// H, J, R, Q. It inits audio.js, margins.js and artwork.js. main.js imports scene.js first, so window.game already exists.
 import qrcode from 'qrcode-generator';
-import cards from '../shared/cards.json';
+import SLOTS from '../shared/slots.json';
+import { createSlots } from './slots.js';
+import * as audio from './audio.js';
+import * as margins from './margins.js';
+import * as artwork from './artwork.js';
 import {
-  MAX_PLAYERS, HB_MS, INPUT_STALE_MS, AWAY_RELEASE_MS, ORIGINAL_COOLDOWN_MS, ORIGINAL_MS, PLAQUES, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN, hubUrl,
-  LEVER_MIN, LEVER_MAX, SPAN_MIN, SPAN_MAX, RISE_MIN, RISE_MAX_PHONE, EXPORT_COOLDOWN_MS,
-  OWNER_IDLE_MS, OWNER_CAP_MS, OWNER_CAP_JUDGE_MS, PLAYER_IDLE_MS, JUDGE_IDLE_MS, JUDGE_RESERVE,
+  MAX_PLAYERS, HB_MS, INPUT_STALE_MS, ORIGINAL_COOLDOWN_MS, ORIGINAL_MS, ARTWORK_COOLDOWN_MS, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN, hubUrl,
+  PLAYER_IDLE_MS, JUDGE_IDLE_MS, JUDGE_RESERVE,
+  SLOT_HOLD_MS, ROLLOVER_MS, ROLLOVER_JITTER_MS, ROLL_WAIT_MS, WS_PATH,
 } from '../shared/protocol.js';
 import './glue.css';
 
 /* pure:start (tests/glue.test.js imports this block on its own, so it must not use imports or globals) */
-export const ownedBy = (owners, pid) => { for (const [plaque, p] of owners) if (p === pid) return plaque; return null; };
-
-// Free or already this pid's: grant, dropping any other plaque the pid holds. Otherwise name the owner.
-export function decideLook(owners, plaque, pid) {
-  const cur = owners.get(plaque);
-  if (cur != null && cur !== pid) return { busy: cur };
-  const prev = ownedBy(owners, pid);
-  return { drop: prev !== plaque ? prev : null };
-}
-
-const PANEL_PLAQUE = new Map([['lever', 'loco'], ['span', 'bridge'], ['rise', 'bridge'], ['export', 'bridge']]);
-export const mayPanel = (owners, pid, kind) => PANEL_PLAQUE.has(kind) && owners.get(PANEL_PLAQUE.get(kind)) === pid;
-
-// A slider value clamped to `ranges` (Map kind -> [min, max]); null when the kind is not a slider or the value not a number.
-export function panelValue(kind, v, ranges) {
-  const r = ranges.get(kind);
-  return r && Number.isFinite(v) ? Math.min(r[1], Math.max(r[0], v)) : null;
-}
-
-// A phone owner's plaque: 'idle' after `idle` ms without a panel input (never in judge mode), 'cap' after holding it
-// `cap` ms (`capJudge` in judge mode), else null.
-export function ownerExpiry({ since, lastPanel }, now, judge, { idle, cap, capJudge }) {
-  if (!judge && now - lastPanel >= idle) return 'idle';
-  return now - since >= (judge ? capJudge : cap) ? 'cap' : null;
-}
-
 // B4: phones quiet longer than `idle` go ('idle'); in judge mode so do phones that were on the bank at J once quiet
-// longer than `judgeIdle` ('judge'). Never plaque owners, already-kicked phones, or guests while judge mode is on.
-export function idleKicks(players, owners, now, judge, { idle, judgeIdle }) {
-  const owning = new Set(owners.values()), out = [];
+// longer than `judgeIdle` ('judge'). Never already-kicked phones, or guests while judge mode is on.
+export function idleKicks(players, now, judge, { idle, judgeIdle }) {
+  const out = [];
   for (const [pid, p] of players) {
-    if (p.kicked || owning.has(pid) || (judge && p.guest)) continue;
+    if (p.kicked || (judge && p.guest)) continue;
     const quiet = now - p.lastActive;
     if (quiet > idle) out.push({ pid, reason: 'idle' });
     else if (judge && p.preJ && quiet > judgeIdle) out.push({ pid, reason: 'judge' });
@@ -50,15 +29,19 @@ export function idleKicks(players, owners, now, judge, { idle, judgeIdle }) {
   return out;
 }
 
-// Judge mode: the longest-idle phones go first (away ones before present ones, plaque owners last) until `keep` remain.
-export function pickKicks(players, owners, keep) {
-  const owning = new Set(owners.values());
+// Judge mode: the longest-idle phones go first (away ones before present ones) until `keep` remain.
+export function pickKicks(players, keep) {
   const list = [...players].filter(([, p]) => !p.kicked)
-    .sort(([a, pa], [b, pb]) => owning.has(a) - owning.has(b) || pb.away - pa.away || pa.lastActive - pb.lastActive);
+    .sort(([, pa], [, pb]) => pb.away - pa.away || pa.lastActive - pb.lastActive);
   return list.slice(0, Math.max(0, list.length - keep)).map(([pid]) => pid);
 }
 
 export const originalWait = (last, now, cooldown) => Math.max(0, last + cooldown - now);
+
+// A phone's picture for the TV: 'tour' while the guided tour is on (judges' phones, the guests, are exempt), 'wait'
+// within that phone's own cooldown, else 'ok'.
+export const artworkGate = (p, now, judge, cooldown) =>
+  judge && !p.guest ? 'tour' : originalWait(p.lastArtwork ?? -Infinity, now, cooldown) ? 'wait' : 'ok';
 
 const wifiEsc = (s) => String(s).replace(/[\\;,:"]/g, '\\$&');
 export const wifiPayload = ({ ssid, pass }) =>
@@ -78,55 +61,95 @@ const game = window.game;
 const query = new URLSearchParams(location.search);
 const token = query.get('host') || '';
 const primary = hubUrl(location, query.get('hub'));
-const FALLBACK = 'ws://localhost/ws';
+const FALLBACK = 'ws://localhost' + WS_PATH;
+const ROLL = Number(query.get('roll')) || 0; // ?roll=<ms> shortens the socket rollover, for testing it
 const els = Object.fromEntries(['roster', 'hud', 'qr', 'resting'].map((id) => [id, document.getElementById(id)]));
 
-const OWNER_LIMITS = { idle: OWNER_IDLE_MS, cap: OWNER_CAP_MS, capJudge: OWNER_CAP_JUDGE_MS };
 const KICK_LIMITS = { idle: PLAYER_IDLE_MS, judgeIdle: JUDGE_IDLE_MS };
-const PANEL_RANGE = new Map([['lever', [LEVER_MIN, LEVER_MAX]], ['span', [SPAN_MIN, SPAN_MAX]], ['rise', [RISE_MIN, RISE_MAX_PHONE]]]);
 
-// phone pid -> {name, color, joinedAt, lastInput, lastActive, moving, away, awayTimer, rtts, stale, kicked,
-//               guest, preJ, since, lastPanel, note}; since/lastPanel only while it owns a plaque
+// phone pid -> {name, color, joinedAt, lastInput, lastActive, moving, away, rtts, kicked, guest, preJ, near, lastArtwork}
 const players = new Map();
-const owners = new Map();  // plaque -> pid (0 is the keyboard)
-let ws = null, open = false, hubSeen = false, closedAt = performance.now(), stopped = '', backoff = 500, retry = 0, replay = 0;
-let fallback = false, hub = null, boot, joinUrl = '', stats = null, judge = false, hudOpen = false, lastOriginal = -Infinity, lastExport = -Infinity;
+let ws = null, open = false, hubSeen = false, closedAt = performance.now(), stopped = '', backoff = 500, retry = 0, rollT = 0, rollWait = 0;
+let fallback = false, hub = null, joinUrl = '', judge = false, hudOpen = false, lastOriginal = -Infinity;
+
+// margins and audio only keep each other's references at init, so the order only matters for artwork, which may use both at once.
+margins.init({ audioStats: audio.stats });
+audio.init({ token, margins });
+artwork.init({ game, token, audio, margins });
 
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
-const tell = (pid, msg) => pid > 0 && send({ t: 'to', pid, msg });
-const kick = (pid, reason) => { if (send({ t: 'kick', pid, reason })) players.get(pid).kicked = true; };
-game.sendTo = (pid, msg) => send({ t: 'to', pid, msg });
+const storage = (key) => { try { const ls = window.localStorage; return { get: () => ls.getItem(key), set: (v) => ls.setItem(key, v) }; } catch { return null; } };
+// Seats, tokens and the cap live here in the host tab; the relay only routes. Its events land in onHub below.
+const seats = createSlots({
+  slots: SLOTS, max: MAX_PLAYERS, holdMs: SLOT_HOLD_MS, store: storage('tt.seats'),
+  send: (cid, msg) => send({ t: 'to', cid, msg }),
+  close: (cid, code, reason, msg) => send({ t: 'close', cid, code, reason, msg }),
+  emit: (m) => onHub(m),
+});
+const tell = (pid, msg) => pid > 0 && seats.to(pid, msg);
+const kick = (pid, reason) => { const p = players.get(pid); if (p) p.kicked = true; seats.kick(pid, reason); };
+game.sendTo = (pid, msg) => seats.to(pid, msg);
 game.sendAll = (msg) => send({ t: 'all', msg });
 
 // ---- socket ----
-function connect() {
+// One socket to the relay. Every ROLLOVER_MS the next one opens and takes over before Vercel's max duration closes
+// the old (make-before-break): the relay registers the new socket before it closes the old, so nothing is missed.
+function connect(roll = false) {
   clearTimeout(retry);
   const base = fallback ? FALLBACK : primary;
+  const prev = roll ? ws : null;
   let s;
   try { s = new WebSocket(base + (base.includes('?') ? '&' : '?') + 'role=host&host=' + encodeURIComponent(token)); }
-  catch { return later(); }
-  ws = s;
-  s.onopen = () => {
-    if (ws !== s) return;
-    open = true; backoff = 500;
-    send({ t: 'cap', max: MAX_PLAYERS });
-    // The hub replays a join for every connected phone; anyone not re-announced within 2 s is gone.
-    for (const p of players.values()) p.stale = true;
-    clearTimeout(replay);
-    replay = setTimeout(() => { for (const [pid, p] of players) if (p.stale) leave(pid); }, 2000);
-  };
-  s.onmessage = (e) => {
-    let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (ws !== s || !m || typeof m !== 'object') return;
-    try { onHub(m); } catch (err) { console.warn('glue: hub message dropped', err); }
-  };
-  s.onclose = (e) => {
-    if (ws !== s) return;
-    ws = null; lost();
-    if (e.code === CLOSE_HOST_REPLACED) stopped = 'Another host tab took over.';
+  catch { if (prev) scheduleRoll(30000); else later(); return; }
+  const onClose = (e) => {
+    if (ws !== s || s.retiring) return;
+    ws = null; clearTimeout(rollT); lost();
+    // A 4000 on a socket whose rollover was abandoned comes from that rollover's own socket, not another tab.
+    if (e.code === CLOSE_HOST_REPLACED && !s.rolled) stopped = 'Another host tab took over.';
     else if (e.code === CLOSE_BAD_HOST_TOKEN) stopped = 'The hub refused the host token.';
     else later();
   };
+  if (prev) {
+    prev.retiring = true; // the relay closes it with 4000 once s is in: our own replacement, not another tab's
+    const abandon = () => {
+      clearTimeout(rollWait); s.onopen = s.onmessage = s.onclose = null; try { s.close(); } catch {}
+      if (ws !== prev) return;
+      prev.retiring = false; prev.rolled = true;
+      if (prev.readyState === 1) scheduleRoll(30000); else { ws = null; lost(); later(); }
+    };
+    rollWait = setTimeout(abandon, ROLL_WAIT_MS);
+    s.onclose = abandon;
+  } else { ws = s; s.onclose = onClose; }
+  s.onopen = () => {
+    if (prev) {
+      clearTimeout(rollWait);
+      if (ws !== prev) { s.onclose = null; s.close(); return; } // switched hubs meanwhile
+      // prev still delivers what the relay routed to it before switching (its onmessage accepts a retiring socket)
+      // until the relay closes it with 4000; the timer only covers a 4000 that never comes.
+      ws = s; s.onclose = onClose; prev.onclose = null;
+      setTimeout(() => { try { prev.close(); } catch {} }, ROLL_WAIT_MS);
+      return scheduleRoll();
+    }
+    if (ws !== s) return;
+    open = true; backoff = 500;
+    // A gap in which messages may have been missed: every seat must answer who (or its hold drops it), and
+    // phones without a seat answer here to get the lobby.
+    seats.hostOpen(); seats.setCap(MAX_PLAYERS);
+    send({ t: 'all', msg: { t: 'who' } });
+    scheduleRoll();
+  };
+  // shortcut: in the few ms two host sockets overlap on different instances, a phone message from a third instance can
+  // reach both; every handler is idempotent except the cooldown-guarded artwork and original. Dedupe by id if it bites.
+  s.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if ((ws !== s && !s.retiring) || !m || typeof m !== 'object') return;
+    try { onRelay(m); } catch (err) { console.warn('glue: relay message dropped', err); }
+  };
+}
+function scheduleRoll(ms) {
+  clearTimeout(rollT);
+  rollT = setTimeout(() => { if (ws && ws.readyState === 1 && !ws.retiring) connect(true); },
+    ms || ROLL || ROLLOVER_MS + Math.random() * ROLLOVER_JITTER_MS);
 }
 function later() { retry = setTimeout(connect, backoff); backoff = Math.min(8000, backoff * 2); }
 function lost() {
@@ -134,26 +157,33 @@ function lost() {
   open = hubSeen = false;
   for (const [pid, p] of players) {
     game.setInput(pid, 0, 0); // no more input can arrive; never let a figure walk on
-    if (!p.away) markAway(pid, p); // nor away or leave: plaques must still free up if the hub never returns
+    p.away = true; // the roster greys them and J kicks them first if the hub never returns
   }
 }
 
+// Relay -> host: its own `hub` greeting, sockets opening and closing, and player messages tagged with their cid.
+function onRelay(m) {
+  const cid = typeof m.cid === 'string' ? m.cid : null;
+  switch (m.t) {
+    case 'hub': hub = m; hubSeen = true; drawQr(); margins.setHub(m); break;
+    case 'open': if (cid) seats.open(cid); break;
+    case 'gone': if (cid) seats.gone(cid); break;
+    case 'hello': case 'here': case 'in': case 'panel': case 'hbr': if (cid) seats.message(cid, m); break;
+  }
+}
+
+// Seat events (src/host/slots.js), with the pid stamped.
 function onHub(m) {
   const pid = Number.isInteger(m.pid) && m.pid > 0 ? m.pid : null, p = players.get(pid), now = performance.now();
   switch (m.t) {
-    case 'hub':
-      // A new hub process (restart, or Q) hands out pids from 1 again: its replayed joins are new players.
-      if (m.boot !== boot) { for (const old of players.keys()) leave(old); boot = m.boot; }
-      hub = m; hubSeen = true; drawQr(); break;
-    case 'stats': stats = m; break;
     case 'join': {
       if (pid == null) return;
       const q = p || { joinedAt: now, lastInput: now, rtts: [], guest: judge };
-      clearTimeout(q.awayTimer);
-      // lastActive restarts on every join, so a hub outage (replayed joins) never idles the whole bank out at once
-      Object.assign(q, { name: String(m.name || 'Visitor'), color: String(m.color || ''), away: false, stale: false, lastActive: now });
+      // lastActive restarts on every join, so a relay outage (every seat answering who) never idles the whole bank out at once
+      Object.assign(q, { name: String(m.name || 'Visitor'), color: String(m.color || ''), away: false, lastActive: now });
       players.set(pid, q);
       game.addPlayer(pid, q.name, q.color);
+      if (!p) audio.play('join'); // not for the who answers after a relay gap: six chimes at once
       resync(pid);
       break;
     }
@@ -164,9 +194,9 @@ function onHub(m) {
       p.moving = !!(lx || a);
       if (p.moving) p.lastInput = p.lastActive = now;
     } break;
-    case 'away': if (p) markAway(pid, p); break;
+    case 'away': if (p) p.away = true; break;
     case 'back':
-      if (p) { clearTimeout(p.awayTimer); p.away = false; }
+      if (p) p.away = false;
       resync(pid);
       break;
     case 'panel': if (p) panel(pid, m.kind, m.value); break;
@@ -177,94 +207,50 @@ function onHub(m) {
   }
 }
 
-// ---- players and plaques ----
-function markAway(pid, p) {
-  p.away = true; clearTimeout(p.awayTimer);
-  p.awayTimer = setTimeout(() => release(ownedBy(owners, pid), 'away'), AWAY_RELEASE_MS);
-}
-
-// Mode, the owned plaque's mirror (so the phone's sliders start at the TV's values), and any release note it missed while away.
+// ---- players, panels and hotspots ----
+// Mode and the label the figure stands at, so the verb button is right again after a reconnect.
 function resync(pid) {
-  const pl = ownedBy(owners, pid), p = players.get(pid);
-  tell(pid, { t: 'mode', mode: pl || 'walk' });
-  if (pl) tell(pid, { t: 'readout', ...game.readout(pl) });
-  if (p?.note) { tell(pid, { t: 'readout', text: p.note }); p.note = null; }
+  tell(pid, { t: 'mode', mode: 'walk' });
+  tell(pid, { t: 'near', label: players.get(pid)?.near ?? null });
 }
 
 function leave(pid) {
-  const p = players.get(pid);
-  release(ownedBy(owners, pid));
-  clearTimeout(p.awayTimer);
   game.removePlayer(pid);
   players.delete(pid);
 }
 
-const closedWhy = (why) => why === 'idle' ? ` after ${OWNER_IDLE_MS / 1000} s without a touch`
-  : why === 'cap' ? ` after ${(judge ? OWNER_CAP_JUDGE_MS : OWNER_CAP_MS) / 1000} s` : ': the connection dropped';
-
-// `why` ('idle' | 'cap' | 'away') adds a one-off readout; an away phone gets it on its next join or back (the hub drops messages to an away socket).
-function release(plaque, why) {
-  const pid = owners.get(plaque);
-  if (pid == null) return;
-  owners.delete(plaque);
-  game.setOwner(plaque, null); game.freeze(pid, false);
-  tell(pid, { t: 'mode', mode: 'walk' });
-  const p = players.get(pid);
-  if (!why || !p) return;
-  const text = `${cards[plaque].fig} ${cards[plaque].title} closed${closedWhy(why)}`;
-  if (p.away) p.note = text; else tell(pid, { t: 'readout', text });
-}
-
-function look(pid, plaque) {
-  if (pid !== 0 && !players.has(pid)) return;
-  const d = decideLook(owners, plaque, pid);
-  if ('busy' in d) {
-    const c = cards[plaque], who = d.busy === 0 ? 'the keyboard' : players.get(d.busy)?.name || 'another visitor';
-    return tell(pid, { t: 'readout', text: `${c.fig} ${c.title} is in use by ${who}` });
-  }
-  if (d.drop) { owners.delete(d.drop); game.setOwner(d.drop, null); }
-  owners.set(plaque, pid);
-  if (pid > 0) { const now = performance.now(); Object.assign(players.get(pid), { since: now, lastPanel: now }); }
-  game.setInput(pid, 0, 0); game.freeze(pid, true); game.setOwner(plaque, pid);
-  resync(pid);
-}
+const readout = (pid, text) => tell(pid, { t: 'readout', text });
 
 function panel(pid, kind, value) {
   const p = players.get(pid), now = performance.now();
   p.lastActive = now;
-  if (kind === 'done') {
-    const pl = ownedBy(owners, pid);
-    return pl ? release(pl) : tell(pid, { t: 'mode', mode: 'walk' }); // re-sync a phone that thinks it holds a panel
-  }
   if (kind === 'original') {
     const wait = originalWait(lastOriginal, now, ORIGINAL_COOLDOWN_MS);
-    if (wait) return tell(pid, { t: 'readout', text: `Show the original again in ${Math.ceil(wait / 1000)} s` });
+    if (wait) return readout(pid, `Show the original again in ${Math.ceil(wait / 1000)} s`);
     lastOriginal = now;
     game.showOriginal();
-    return tell(pid, { t: 'readout', text: `Showing the original on the screen for ${ORIGINAL_MS / 1000} s` });
+    return readout(pid, `Showing the original on the screen for ${ORIGINAL_MS / 1000} s`);
   }
-  if (!mayPanel(owners, pid, kind)) return;
-  if (kind === 'export') {
-    p.lastPanel = now; // a tap during the cooldown still shows the owner is there
-    const wait = originalWait(lastExport, now, EXPORT_COOLDOWN_MS);
-    if (wait) return tell(pid, { t: 'readout', text: `Export again in ${Math.ceil(wait / 1000)} s` });
-    const r = game.exportArch();
-    lastExport = now;
-    return tell(pid, { t: 'readout', text: r.text });
-  }
-  const v = panelValue(kind, value, PANEL_RANGE);
-  if (v == null) return;
-  p.lastPanel = now;
-  tell(pid, { t: 'readout', ...game.setPanel(pid, kind, v) });
+  if (kind !== 'artwork' || typeof value !== 'string') return; // the relay already checked it is a Blob scene URL
+  const gate = artworkGate(p, now, judge, ARTWORK_COOLDOWN_MS);
+  if (gate === 'tour') return readout(pid, 'Pictures are paused for the guided tour');
+  if (gate === 'wait') return readout(pid, `One picture every ${ARTWORK_COOLDOWN_MS / 1000} s`);
+  p.lastArtwork = now;
+  readout(pid, 'Your picture is on its way to the TV');
+  artwork.fromPhone(value, pid).catch(() => false)
+    .then((ok) => { if (!ok) readout(pid, "The TV couldn't open that picture; try another"); });
 }
 
 game.onHotspot((e) => {
-  const plaque = PLAQUES.includes(e?.plaque) ? e.plaque : null;
-  if (e?.type === 'near') tell(e.pid, { t: 'near', plaque });
-  else if (!plaque) return;
-  else if (e.type === 'look') look(e.pid, plaque);
-  else if (e.type === 'done') release(plaque); // Esc or the TV close button: the kiosk may close any panel
-  else if (e.type === 'walkoff' && owners.get(plaque) === e.pid) release(plaque);
+  const label = typeof e?.label === 'string' ? e.label : null;
+  if (e?.type === 'near') {
+    const p = players.get(e.pid);
+    if (p) p.near = label;
+    tell(e.pid, { t: 'near', label });
+  } else if (e?.type === 'poke') {
+    audio.play('poke', { label, kind: e.kind, sound_prompt: e.sound_prompt });
+    readout(e.pid, 'You poked the ' + (label || 'object'));
+  } else if (e?.type === 'layer') margins.showPlatforms(e.name === 'network');
 });
 
 // ---- operator keys ----
@@ -272,20 +258,25 @@ game.onHotspot((e) => {
 function setJudge(on) {
   judge = on; game.setJudge(on);
   for (const p of players.values()) Object.assign(p, { guest: false, preJ: on });
-  if (on) for (const pid of pickKicks(players, owners, MAX_PLAYERS - JUDGE_RESERVE)) kick(pid, 'judge');
+  if (on) for (const pid of pickKicks(players, MAX_PLAYERS - JUDGE_RESERVE)) kick(pid, 'judge');
 }
 
 function reset() {
-  for (const plaque of [...owners.keys()]) release(plaque);
   game.reset();
+  artwork.loadSample(1);
+  audio.play('reset');
   game.sendAll({ t: 'mode', mode: 'reset' });
   setJudge(false);
-  lastOriginal = lastExport = -Infinity;
-  send({ t: 'cap', max: MAX_PLAYERS });
+  lastOriginal = -Infinity;
+  for (const p of players.values()) p.lastArtwork = -Infinity;
+  seats.setCap(MAX_PLAYERS);
 }
 
+// Q: phones do not follow the host to the other relay by themselves; they rescan the new QR (or keep their seat
+// if they come back within the hold).
 function switchHub() {
   fallback = !fallback; hub = null; stopped = ''; backoff = 500;
+  clearTimeout(rollT); clearTimeout(rollWait);
   if (open) lost();
   const old = ws; ws = null; old?.close();
   connect(); drawQr();
@@ -327,8 +318,8 @@ function drawQr() {
   joinUrl = typeof hub?.joinUrl === 'string' && !(token && hub.joinUrl.includes(token)) ? hub.joinUrl : '';
   const wifi = fallback && hub?.wifi?.ssid ? hub.wifi : null;
   els.qr?.replaceChildren(...(!joinUrl ? [] : wifi
-    ? [qrFigure(wifiPayload(wifi), '1  Join the Toy Theatre Wi-Fi'), qrFigure(joinUrl, '2  Scan to walk on the riverbank', short(joinUrl))]
-    : [qrFigure(joinUrl, 'Scan to walk on the riverbank', short(joinUrl))]));
+    ? [qrFigure(wifiPayload(wifi), '1  Join the Toy Theatre Wi-Fi'), qrFigure(joinUrl, '2  Scan to walk into the picture', short(joinUrl))]
+    : [qrFigure(joinUrl, 'Scan to walk into the picture', short(joinUrl))]));
 }
 
 const dur = (s) => Number.isFinite(s) ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m` : '—';
@@ -341,20 +332,20 @@ function render() {
     els.resting.replaceChildren(h('p', 'rest', 'This exhibit is resting. Please use the keyboard.', ...(stopped ? [h('small', '', stopped)] : [])));
   }
 
-  const row = (color, name, away, plaque) =>
-    h('li', away ? 'away' : '', dot(color), h('span', '', name, away ? ' (away)' : '', ...(plaque ? [h('span', 'fig', ` · ${cards[plaque].fig}`)] : [])));
-  els.roster?.replaceChildren(h('h2', '', 'On the bank'), h('ul', '',
-    row('var(--slot-keyboard)', 'Keyboard', false, ownedBy(owners, 0)),
-    ...[...players].map(([pid, p]) => row(p.color, p.name, p.away, ownedBy(owners, pid)))));
+  const row = (color, name, away) => h('li', away ? 'away' : '', dot(color), h('span', '', name, away ? ' (away)' : ''));
+  els.roster?.replaceChildren(h('h2', '', 'In the picture'), h('ul', '',
+    row('var(--slot-keyboard)', 'Keyboard', false),
+    ...[...players.values()].map((p) => row(p.color, p.name, p.away))));
 
-  const where = hub?.region && hub.region !== 'local' ? `fly ${hub.region}` : hub ? 'local' : '—';
+  const where = !hub ? '—' : hub.region === 'local' ? 'local' : `vercel ${hub.region}${hub.bus === 'redis' ? '' : ' · no redis'}`;
   const hud = [h('div', 'line', dot('', open && hubSeen ? 'ok' : 'bad'), `${where} · players ${players.size}/${MAX_PLAYERS}`)];
   if (hudOpen) {
-    const s = stats || {}, fps = game.stats()?.fps;
+    const s = { uptime: performance.now() / 1000, ...seats.stats() }, st = game.stats() || {}, cur = artwork.current() || {};
     hud.push(h('div', 'more', ...[
       `join ${joinUrl || '—'}`,
       `up ${dur(s.uptime)} · joins ${s.joinsTotal ?? '—'} · reconnects ${s.reconnects ?? '—'}`,
-      `fps ${Number.isFinite(fps) ? Math.round(fps) : '—'}`,
+      `fps ${Number.isFinite(st.fps) ? Math.round(st.fps) : '—'}`,
+      `layer ${st.layer || '—'} · ${cur.saved || '—'}${cur.id ? ' ' + cur.id : ''}`,
       // One short line per phone: guests are exempt from idle releases, so they show 'guest' in place of the idle clock.
       ...[...players.values()].map((p) => `${p.name.split(' ')[0]} rtt ${p.rtts.length ? Math.round(median(p.rtts)) + 'ms' : '—'} `
         + (judge && p.guest ? 'guest' : `idle ${Math.floor((performance.now() - p.lastActive) / 1000)}s`)),
@@ -366,15 +357,11 @@ function render() {
 
 setInterval(() => send({ t: 'all', msg: { t: 'hb', ts: Math.round(performance.now()) } }), HB_MS);
 setInterval(render, 500);
-// A phone frozen in the background can leave its socket open without sending the zero; its 10 Hz heartbeat stops instead.
+// A phone frozen in the background can leave its socket open without sending the zero; its 4 Hz heartbeat (INPUT_HZ) stops instead.
 setInterval(() => {
   const now = performance.now();
   for (const [pid, p] of players) if (p.moving && now - p.lastInput > INPUT_STALE_MS) { p.moving = false; game.setInput(pid, 0, 0); }
-  for (const [plaque, pid] of owners) { // phone owners only: the keyboard releases on Esc, close, walk-off or R
-    const p = players.get(pid), why = p && ownerExpiry(p, now, judge, OWNER_LIMITS);
-    if (why) release(plaque, why);
-  }
 }, 250);
-setInterval(() => { for (const { pid, reason } of idleKicks(players, owners, performance.now(), judge, KICK_LIMITS)) kick(pid, reason); }, 1000);
+setInterval(() => { for (const { pid, reason } of idleKicks(players, performance.now(), judge, KICK_LIMITS)) kick(pid, reason); }, 1000);
 connect();
 render();

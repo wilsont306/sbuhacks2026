@@ -1,6 +1,7 @@
-// Debug overlay on the backtick key: the 8 path dots, the curve and the plaque anchors, drawn through the live
-// camera. Drag a dot to move it (h is baked from the depth at the drop point); drag a plaque along the curve to
-// change its t. Changes apply live; "Save path.json" downloads the README schema.
+// Debug overlay on the backtick key: the 8 path dots, the curve and the stops (path.plaques), drawn through the live
+// camera. Drag a dot to move it (h is baked from the depth at the drop point); drag a stop along the curve to
+// change its t. Changes apply live; "Save path.json" downloads the README schema. size() returns the plane and
+// relief amplitude now, since both change per scene and per layer.
 import * as THREE from 'three';
 
 const r4 = (x) => Math.round(x * 1e4) / 1e4;
@@ -11,7 +12,7 @@ export function pathJson(p) {
   return `{\n  "image": ${JSON.stringify(p.image)},\n  "points": [\n${rows(p.points)}\n  ],\n  "plaques": [\n${rows(p.plaques)}\n  ]\n}\n`;
 }
 
-export function createPathOverlay({ stage, camera, W, H, AMP, getPath, getCurve, sample, onChange }) {
+export function createPathOverlay({ stage, camera, size, getPath, getCurve, sample, onChange }) {
   const c = document.createElement('canvas'), save = document.createElement('button');
   c.width = 1447; c.height = 1080; c.className = 'path-overlay'; c.hidden = true;
   save.type = 'button'; save.className = 'btn path-save'; save.textContent = 'Save path.json'; save.hidden = true;
@@ -19,7 +20,7 @@ export function createPathOverlay({ stage, camera, W, H, AMP, getPath, getCurve,
   const g = c.getContext('2d'), v = new THREE.Vector3(), hit = new THREE.Vector3(), ndc = new THREE.Vector2();
   const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const screen = (u, vv, h) => { v.set((u - 0.5) * W, (vv - 0.5) * H, h * AMP).project(camera); return [(v.x + 1) / 2 * c.width, (1 - v.y) / 2 * c.height]; };
+  const screen = (u, vv, h) => { const { W, H, AMP } = size(); v.set((u - 0.5) * W, (vv - 0.5) * H, h * AMP).project(camera); return [(v.x + 1) / 2 * c.width, (1 - v.y) / 2 * c.height]; };
   const onCurve = (t) => { const q = getCurve().getPoint(t); return screen(q.x, q.y, q.z); };
   const local = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * c.width, (e.clientY - r.top) / r.height * c.height]; };
   let drag = null;
@@ -43,7 +44,7 @@ export function createPathOverlay({ stage, camera, W, H, AMP, getPath, getCurve,
     } else {
       ray.setFromCamera(ndc.set(x / c.width * 2 - 1, 1 - y / c.height * 2), camera);
       if (!ray.ray.intersectPlane(plane, hit)) return;
-      const u = clamp01(hit.x / W + 0.5), vv = clamp01(hit.y / H + 0.5);
+      const { W, H } = size(), u = clamp01(hit.x / W + 0.5), vv = clamp01(hit.y / H + 0.5);
       p.points[drag.i] = [r4(u), r4(vv), r4(sample(u, vv))];
     }
     onChange();

@@ -1,0 +1,17 @@
+[
+  { "file": "join", "prompt": "A single soft brass hand-bell chime, warm and quiet, a Victorian toy theatre greeting a guest, short clean decay", "seconds": 2, "loop": false },
+  { "file": "poke", "prompt": "A fingertip tapping stiff painted card, one small dry paper tick, close and quiet", "seconds": 2, "loop": false },
+  { "file": "appear", "prompt": "Stiff paper unfolding and a cardboard cutout popping upright on a toy theatre stage, soft rustle, quiet", "seconds": 2, "loop": false },
+  { "file": "save", "prompt": "An old rubber ink stamp pressed onto paper on a wooden desk, one soft thump, quiet", "seconds": 2, "loop": false },
+  { "file": "reset", "prompt": "A paper curtain sweeping closed on a small toy theatre, soft whoosh of air and cloth, quiet", "seconds": 2, "loop": false },
+  { "file": "gallery", "prompt": "A heavy old portfolio album opening, thick pages turning with a soft paper flutter, quiet", "seconds": 2, "loop": false },
+  { "file": "wind", "prompt": "Gentle steady breeze over open countryside, soft and airy, no gusts, quiet ambience", "seconds": 4, "loop": true },
+  { "file": "water", "prompt": "Calm river water lapping softly against a grassy bank, gentle steady flow, quiet ambience", "seconds": 4, "loop": true },
+  { "file": "fire", "prompt": "A small hearth fire crackling softly with gentle pops, warm and quiet ambience", "seconds": 4, "loop": true },
+  { "file": "animal", "prompt": "A horse snorting softly and stamping one hoof in a quiet nineteenth-century farmyard", "seconds": 2, "loop": false },
+  { "file": "bird", "prompt": "A small songbird chirping twice in a quiet English garden, light and delicate", "seconds": 2, "loop": false },
+  { "file": "vehicle", "prompt": "A distant nineteenth-century steam locomotive giving one short whistle and a soft chuff, quiet", "seconds": 2, "loop": false },
+  { "file": "footsteps", "prompt": "A few unhurried footsteps of leather shoes on a gravel path, quiet", "seconds": 2, "loop": false },
+  { "file": "bell", "prompt": "A distant church bell striking once across a quiet old town, soft reverberant decay", "seconds": 2, "loop": false },
+  { "file": "twinkle", "prompt": "A delicate high music-box shimmer like starlight, soft glassy sparkle, quiet", "seconds": 2, "loop": false }
+]

@@ -1,101 +1,134 @@
-/* Phone controller skin (J5): cream paper readable in sunlight, IM Fell headings, brass only on the primary action (verb, Export).
-   Colours come from tokens.css only. No flex `gap` (iOS 13 lacks it); grid gap is fine. */
+/* Phone controller skin: the cyanotype toy theatre. Prussian-blue ground, cream paper cards, brass only on the
+   primary action (the verb, Join again) and the focus ring. Colours come from tokens.css only.
+   8 px spacing scale; 8 px radii on cards, 999 px on pills and chips; hairlines instead of heavy borders.
+   iOS 13: no flex `gap` (grid gap is fine), no `inset`. */
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { height: 100%; touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+html { height: 100%; background: var(--prussian); touch-action: manipulation; -webkit-text-size-adjust: 100%; }
 body {
   position: fixed; top: 0; right: 0; bottom: 0; left: 0; margin: 0; overflow: hidden; overscroll-behavior: none;
   display: flex; flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  background: var(--paper); color: var(--ink); font: 19px/1.4 var(--font-ui);
+  background: var(--prussian) radial-gradient(130% 90% at 50% 0%, var(--prussian) 45%, var(--prussian-deep) 140%);
+  color: var(--frame-ink); font: 19px/1.4 var(--font-ui);
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
 }
-h1 { font: 400 32px/1.15 var(--font-display); margin: 0 0 12px; }
-p { margin: 0 0 12px; }
-button {
-  font: 600 19px/1.2 var(--font-ui); color: var(--ink); background: var(--cream); cursor: pointer;
-  min-height: var(--tap); padding: 8px 16px; border: 2px solid var(--ink); border-radius: var(--radius);
-}
-button:focus, input:focus { outline: 3px solid var(--prussian); outline-offset: 2px; }
-button:focus:not(:focus-visible), input:focus:not(:focus-visible) { outline: none; }
-.solid { width: 100%; min-height: 60px; background: var(--ink); color: var(--cream); }
+h1 { font: 400 32px/1.15 var(--font-display); margin: 0 0 8px; }
+p { margin: 0 0 16px; }
 
-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 6px 16px; border-bottom: 2px solid var(--ink); }
-#me { display: flex; align-items: center; margin: 4px 12px 4px 0; font-weight: 600; }
-#me::before { content: ''; flex: none; width: 24px; height: 24px; margin-right: 10px; border-radius: 50%; border: 2px solid var(--ink); background: var(--accent); }
+/* Buttons: outlined pills on the blue ground by default; .primary and .verb are the brass ones. */
+button {
+  -webkit-appearance: none; appearance: none;
+  font: 600 19px/1.2 var(--font-ui); color: var(--frame-ink); background: transparent; cursor: pointer;
+  min-height: var(--tap); padding: 8px 16px; border: 2px solid var(--frame-ink); border-radius: var(--radius-pill);
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out, background-color 150ms ease-out, opacity 150ms ease-out;
+}
+button:focus { outline: 3px solid var(--focus); outline-offset: 3px; }
+button:focus:not(:focus-visible) { outline: none; }
+.primary { width: 100%; min-height: 56px; border: 0; background: var(--brass); color: var(--brass-ink); box-shadow: 0 4px 0 var(--prussian-deep); }
+.primary:active { transform: translateY(4px); box-shadow: 0 0 0 var(--prussian-deep); }
+
+/* ---- header: name chip and Show the original ---- */
+/* one row on a 320 px phone: the chip shrinks and wraps a long name onto two lines rather than pushing the button down */
+header { position: relative; display: flex; align-items: center; padding: 8px 16px; }
+header::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 0; height: 1px; background: var(--rule-frame); }
+#me {
+  flex: 0 1 auto; min-width: 0; margin: 4px 8px 4px 0; padding: 6px 16px; border: 2px solid var(--cream);
+  border-radius: var(--radius-pill); background: var(--accent); color: var(--on-accent); font-size: 18px; font-weight: 600; line-height: 1.15;
+}
 #me:empty { visibility: hidden; }
-#origBtn { margin: 4px 0 4px auto; }
-#resting { margin: 0; padding: 8px 24px; background: var(--prussian); color: var(--frame-ink); }
+#origBtn { flex: none; margin: 4px 0 4px auto; padding: 8px 14px; font-size: 18px; }
+#resting { margin: 0; padding: 8px 16px; background: var(--prussian-deep); color: var(--frame-ink); font-size: 18px; text-align: center; }
 
 main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 24 px side padding keeps the pad clear of Safari's edge swipe */
-.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 24px; }
-#connecting, #full, #evicted { justify-content: center; text-align: center; }
-.hint { margin-top: 12px; padding: 12px 16px; border: 2px solid var(--ink); border-radius: var(--radius); background: var(--cream); }
+.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 24px; animation: fade-in var(--fade) ease-out; }
 
-#swatches { display: grid; grid-gap: 12px; gap: 12px; align-content: start; min-height: 0; overflow-y: auto; touch-action: pan-y; padding: 4px; margin: 0 -4px; }
-.swatch { display: flex; align-items: center; min-height: 64px; text-align: left; font-size: 20px; }
-.swatch::before { content: ''; flex: none; width: 40px; height: 40px; margin-right: 14px; border-radius: 50%; border: 2px solid var(--ink); background: var(--c); }
+/* ---- connecting, full, evicted: one calm centred paper card ---- */
+.card {
+  width: 100%; max-width: 440px; margin: auto; padding: 32px 24px; border-radius: var(--radius-card);
+  background: var(--cream); color: var(--ink); text-align: center; box-shadow: var(--shadow-card);
+}
+.card h1 { margin-bottom: 16px; }
+.card > :last-child { margin-bottom: 0; }
+#evicted h1 { font-size: 28px; }
+.hint { margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--rule-ink); color: var(--ink-soft); font-size: 18px; }
 
-#walk { display: grid; grid-gap: 16px; gap: 16px; grid-template: "hint" auto "pad" 1fr "verb" auto / 1fr; }
-.padhint { grid-area: hint; margin: 0; text-align: center; }
-#pad { grid-area: pad; position: relative; display: flex; min-height: 180px; overflow: hidden; border: 2px solid var(--ink); border-radius: 16px; background: var(--cream); touch-action: none; }
-#pad span { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 48px; }
-#pad::after { content: ''; position: absolute; top: 15%; bottom: 15%; left: 50%; border-left: 2px dashed var(--ink); }
+/* ---- lobby: swatch cards filled with each colour, the name in ink or cream (--on, by luminance) ---- */
+.kicker { margin: 0 0 8px; font-size: 18px; opacity: .85; }
+#lobby h1 { font-size: 40px; }
+.lead { margin-bottom: 16px; }
+#swatches {
+  display: grid; grid-gap: 16px; gap: 16px; align-content: start; min-height: 0; overflow-y: auto; touch-action: pan-y;
+  padding: 8px 8px 16px; margin: 0 -8px; /* room for the focus ring and the card shadow */
+}
+.swatch {
+  display: flex; align-items: center; min-height: 64px; padding: 12px 20px; border: 2px solid var(--cream); border-radius: var(--radius-card);
+  background: var(--c); color: var(--on); text-align: left; font-size: 24px; line-height: 1.15; box-shadow: var(--shadow-card);
+}
+.swatch::after { content: ''; flex: none; width: 12px; height: 12px; margin: 0 4px 0 auto; border-top: 2px solid; border-right: 2px solid; transform: rotate(45deg); }
+.swatch:active { transform: translateY(2px); box-shadow: none; }
+.note { margin: 16px 0 0; padding: 16px; border-radius: var(--radius-card); background: var(--cream); color: var(--ink); text-align: center; }
+
+/* ---- walk: the pad, the verb, Add artwork ---- */
+#walk { display: grid; grid-gap: 16px; gap: 16px; grid-template: "hint" auto "pad" 1fr "verb" auto "art" auto / 1fr; }
+.padhint { grid-area: hint; margin: 0; font-size: 18px; text-align: center; opacity: .85; }
+#pad {
+  grid-area: pad; position: relative; display: flex; min-height: 168px; overflow: hidden; border-radius: calc(var(--radius-card) * 2);
+  background: var(--cream); color: var(--ink); touch-action: none; box-shadow: var(--shadow-card);
+}
+#pad * { pointer-events: none; }
+#pad span { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: background-color 150ms ease-out, color 150ms ease-out; }
+#pad svg { width: 64px; height: 64px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease-out; }
+#pad em { margin-top: 8px; font-size: 18px; font-style: normal; font-weight: 600; letter-spacing: .04em; }
+/* the line between the halves; the 15% dead zone sits on it */
+#pad::after { content: ''; position: absolute; top: 24px; bottom: 24px; left: 50%; width: 2px; margin-left: -1px; background: var(--ink); opacity: .25; }
 #pad[data-lx="-1"] .l, #pad[data-lx="1"] .r { background: var(--ink); color: var(--cream); }
-.verb { grid-area: verb; min-height: 76px; font-size: 22px; touch-action: none; background: var(--brass); color: var(--brass-ink); border-color: var(--brass-ink); }
-.verb[aria-disabled="true"] { background: var(--cream); color: var(--ink); border-style: dashed; }
-.verb.down { transform: translateY(2px); border-width: 4px; }
+#pad[data-lx="-1"] .l svg { transform: translateX(-6px); }
+#pad[data-lx="1"] .r svg { transform: translateX(6px); }
 
-/* Controls on top, the card scrolls below; a screen too short for both (small phone, landscape) scrolls as a whole,
-   and the sliders never pan, so a drag moves only the thumb. */
-#plaque { overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
-#plaque h1 { font-size: 28px; margin-bottom: 8px; }
-#plaque article { flex: 1; min-height: 120px; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
-.ctl { flex: none; margin-bottom: 12px; }
-.row { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; }
-.num { font-family: var(--font-mono); font-weight: 400; }
-input[type=range] { display: block; width: 100%; height: 48px; margin: 0 0 4px; padding: 0; background: transparent; touch-action: none; -webkit-appearance: none; appearance: none; }
-input[type=range]:disabled { opacity: .4; }
-input[type=range]::-webkit-slider-runnable-track { height: 10px; border-radius: 5px; background: var(--ink); }
-input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 44px; height: 44px; margin-top: -17px; border: 3px solid var(--ink); border-radius: 50%; background: var(--cream); }
-input[type=range]::-moz-range-track { height: 10px; border-radius: 5px; background: var(--ink); }
-input[type=range]::-moz-range-thumb { width: 44px; height: 44px; border: 3px solid var(--ink); border-radius: 50%; background: var(--cream); }
-.ro { margin: 4px 0 12px; padding: 10px 14px; border-radius: var(--radius); background: var(--ink); color: var(--cream); font: 18px/1.35 var(--font-mono); }
-.ro p { margin: 0; }
-.big { font-size: 52px; line-height: 1; }
-#verdict.ok { color: var(--ok); }
-#verdict.bad { color: var(--bad); }
-#export { width: 100%; min-height: 56px; background: var(--brass); color: var(--brass-ink); border-color: var(--brass-ink); }
-.fig { font: 18px/1.3 var(--font-mono); letter-spacing: .04em; margin-bottom: 4px; }
-.headline { font-weight: 600; font-size: 20px; }
-.source { font: 18px/1.4 var(--font-mono); }
-.closing { font-style: italic; }
-#done { flex: none; margin-top: 16px; }
+.verb {
+  grid-area: verb; min-height: 72px; padding: 12px 24px; border: 0; background: var(--brass); color: var(--brass-ink);
+  font-size: 22px; touch-action: none; box-shadow: 0 4px 0 var(--prussian-deep);
+}
+.verb.down { transform: translateY(4px); box-shadow: 0 0 0 var(--prussian-deep); }
+.verb[aria-disabled="true"] { background: transparent; color: var(--frame-ink); border: 2px dashed var(--frame-ink); box-shadow: none; transform: none; font-weight: 400; }
 
-#banner, #toast { position: absolute; top: 8px; left: 24px; right: 24px; margin: 0; padding: 12px 16px; border-radius: var(--radius); text-align: center; pointer-events: none; }
-#banner { z-index: 3; background: var(--prussian); color: var(--frame-ink); font-weight: 600; }
-#toast { z-index: 2; background: var(--ink); color: var(--cream); }
+#art { grid-area: art; text-align: center; }
+#artBtn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 56px; }
+.cam { flex: none; width: 26px; height: 26px; margin-right: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+#artBtn:disabled { border-style: dashed; cursor: default; opacity: .75; }
+#artNote { margin: 8px 0 0; font-size: 18px; line-height: 1.35; opacity: .85; }
+
+/* ---- status pills: Reconnecting at the top, toasts at the bottom (main already sits inside the safe area) ---- */
+#banner, #toast {
+  position: absolute; left: 50%; width: -webkit-max-content; width: max-content; max-width: calc(100% - 48px);
+  margin: 0; padding: 12px 24px; border-radius: var(--radius-pill); font-size: 18px; text-align: center; pointer-events: none; transform: translateX(-50%);
+}
+#banner { top: 16px; z-index: 3; background: var(--ink); color: var(--cream); font-weight: 600; }
+#toast { bottom: 16px; z-index: 2; background: var(--cream); color: var(--ink); box-shadow: var(--shadow-card); animation: toast-in var(--fade) ease-out; }
 #toast:empty { display: none; }
 
 #splash { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; background: var(--accent); color: var(--on-accent); pointer-events: none; animation: fade 3s forwards; }
+#splash span { font-size: 20px; }
 #splash b { font: 400 46px/1.1 var(--font-display); margin-top: 8px; }
-@keyframes fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
 body.joined::after { content: ''; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 5; pointer-events: none; box-shadow: inset 0 0 0 5px var(--accent), inset 0 0 24px var(--accent); }
 
-#orig { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: var(--ink); }
-#orig img { width: 100%; height: 100%; object-fit: contain; }
-#orig .tag { position: absolute; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); margin: 0; color: var(--cream); font: 18px/1.3 var(--font-mono); text-align: center; }
+@keyframes fade { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 
 @media (orientation: landscape) and (max-height: 540px) {
-  header { padding-top: 2px; padding-bottom: 2px; }
-  .screen { padding-top: 12px; padding-bottom: 12px; }
-  h1 { font-size: 26px; }
-  #walk { grid-template: "hint hint" auto "pad verb" 1fr / 3fr 2fr; }
+  header { padding-top: 4px; padding-bottom: 4px; }
+  .screen { padding-top: 8px; padding-bottom: 8px; }
+  h1, #lobby h1 { font-size: 28px; }
+  .kicker { display: none; }
+  .card { padding: 24px; }
+  #walk { grid-template: "hint hint" auto "pad verb" 1fr "pad art" auto / 3fr 2fr; }
   #pad { min-height: 0; }
   #swatches { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #splash { animation: none; }
-  .verb.down { transform: none; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .primary:active, .swatch:active, .verb.down, #pad span svg { transform: none !important; }
 }

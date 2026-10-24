@@ -1,0 +1,40 @@
+/* src/host/artwork.js's DOM on the TV stage: the gallery overlay (G) with 12 project cards in a 4-wide grid, and the
+   drop hint shown while a file is dragged over the page. Paper cards on the Prussian ground; brass marks only the
+   focused card. Tokens only; TV type at 28 px or more. */
+.art-gallery {
+  position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column; gap: var(--space-1); padding: 28px 40px;
+  background: color-mix(in srgb, var(--prussian-deep) 94%, transparent); color: var(--cream);
+  font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
+  animation: tt-fade var(--fade) ease-out;
+}
+.art-gallery[hidden], .art-drop[hidden] { display: none; }
+.art-head { display: flex; align-items: baseline; gap: 28px; padding-bottom: var(--space-1); border-bottom: 1px solid var(--rule-frame); }
+.art-head h2 { margin: 0; font: 400 48px/1.1 var(--font-display); }
+.art-note, .art-store, .art-empty { margin: 0; color: var(--muted); }
+.art-store { font-family: var(--font-ui); }
+.art-cards {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: var(--space-1) 0 0; padding: 0; list-style: none;
+}
+.art-card {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; min-height: var(--tap); padding: 8px 8px 10px; text-align: left;
+  background: var(--paper); color: var(--ink); font: inherit; cursor: pointer;
+  border: 1px solid var(--rule-ink); border-radius: var(--radius-card); box-shadow: var(--shadow-card);
+}
+/* The selection is a thick brass ring plus aria-current, not a colour change alone. */
+.art-card.selected, .art-card:focus-visible { outline: 4px solid var(--focus); outline-offset: 4px; box-shadow: var(--shadow-lift); }
+.art-pic { height: 136px; margin-bottom: 4px; overflow: hidden; border-radius: 4px; background: var(--prussian-deep); }
+.art-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.art-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 400 30px/1.2 var(--font-display); }
+.art-meta { display: flex; align-items: center; gap: var(--space-1); font-family: var(--font-mono); color: var(--ink-soft); }
+.art-chip { padding: 0 10px; border: 1px solid var(--ink); border-radius: var(--radius-pill); font-family: var(--font-ui); color: var(--ink); }
+.art-badge { color: var(--ink-soft); }
+.art-badge.saved { color: var(--ok-ink); font-weight: 600; }
+.art-badge.saved::before { content: "✓ "; }
+
+.art-drop {
+  position: absolute; inset: var(--space-3); z-index: 9; display: grid; place-items: center; pointer-events: none;
+  border: 4px dashed var(--brass); border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--prussian-deep) 72%, transparent);
+  color: var(--cream); font: 400 44px/1.2 var(--font-display); text-align: center;
+  animation: tt-fade var(--fade) ease-out;
+}

@@ -1,25 +1,30 @@
 /* What glue.js draws inside the margins: #roster (left), #hud, #qr and #resting (right). Tokens only. */
 #qr[hidden], #resting[hidden] { display: none !important; } /* host.html may give these a display; hidden must win */
 
-#roster h2 { margin: 0 0 12px; font: 400 32px/1.15 var(--font-display); color: var(--frame-ink); }
+/* Roster: a colour dot (ringed, so dark accents read on blue) and the name; names never by colour alone. */
+#roster { flex: none; padding-top: var(--space-2); border-top: 1px solid var(--rule-frame); margin-top: auto; }
+#roster h2 { margin: 0 0 var(--space-1); font: 400 28px/1.15 var(--font-display); color: var(--frame-ink); }
 #roster ul { margin: 0; padding: 0; list-style: none; }
-#roster li { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; font: 28px/1.2 var(--font-ui); color: var(--frame-ink); }
-#roster li.away { opacity: .5; }
-#roster .fig { color: var(--brass); }
-#roster .dot { width: 20px; height: 20px; margin-top: 7px; }
+#roster li { display: flex; gap: 10px; align-items: flex-start; min-width: 0; padding: 3px 0; font: 400 22px/1.25 var(--font-ui); color: var(--frame-ink); }
+#roster li > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+#roster li.away { color: var(--muted); }
+#roster li.away .dot { opacity: .45; }
+#roster .dot { width: 18px; height: 18px; margin-top: 5px; box-shadow: 0 0 0 2px var(--frame-ink); }
 #roster .dot, #hud .dot { flex: none; display: inline-block; border-radius: 50%; }
 
-/* Operator status, not visitor text: one line has to fit the 236 px margin. */
-#hud .line { display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; font: 18px/1.35 var(--font-ui); font-variant-numeric: tabular-nums; color: var(--frame-ink); }
-#hud .dot { width: 14px; height: 14px; }
+/* Operator status, not visitor text: small, and it wraps rather than clips inside the card. */
+#hud .line { display: flex; align-items: flex-start; gap: var(--space-1); font: 18px/1.35 var(--font-ui); font-variant-numeric: tabular-nums; color: var(--frame-ink); overflow-wrap: anywhere; }
+#hud .dot { width: 12px; height: 12px; margin-top: 6px; }
 #hud .ok { background: var(--ok); }
 #hud .bad { background: var(--bad); }
-#hud .more { margin-top: 6px; font: 15px/1.4 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }
+#hud .more { margin-top: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--rule-frame); font: 15px/1.4 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }
 
-#qr figure { margin: 0 0 16px; }
-#qr canvas { display: block; max-width: none; image-rendering: pixelated; }
-#qr figcaption { margin-top: 8px; font: 28px/1.2 var(--font-ui); color: var(--frame-ink); white-space: pre-wrap; }
-#qr .url { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+/* The join QR: a cream paper card, the code edge to edge (its quiet zone is drawn in --paper), the caption in ink. */
+#qr { flex: none; display: flex; flex-direction: column; gap: var(--space-2); }
+#qr figure { margin: 0; overflow: hidden; border-radius: var(--radius-card); background: var(--paper); color: var(--ink); box-shadow: var(--shadow-card); }
+#qr canvas { display: block; max-width: none; margin: 0 auto; image-rendering: pixelated; }
+#qr figcaption { padding: 0 12px 12px; font: 600 22px/1.2 var(--font-ui); color: var(--ink); white-space: pre-wrap; }
+#qr .url { display: block; margin-top: 4px; font: 400 16px/1.3 var(--font-mono); color: var(--ink-soft); word-break: break-all; }
 
-#resting .rest { margin: 0; font: 32px/1.25 var(--font-display); color: var(--frame-ink); }
-#resting .rest small { display: block; margin-top: 12px; font: 28px/1.25 var(--font-ui); color: var(--muted); }
+#resting .rest { margin: 0; font: 400 28px/1.2 var(--font-display); color: var(--frame-ink); }
+#resting .rest small { display: block; margin-top: var(--space-1); font: 400 20px/1.25 var(--font-ui); color: var(--muted); }

@@ -13,58 +13,48 @@
 <p id="resting" hidden>The screen is resting</p>
 <main>
   <section id="connecting" class="screen">
-    <h1>Toy Theatre</h1>
-    <p>Connecting to the bank…</p>
-    <p id="hint" class="hint" hidden>Slow? Try turning Wi-Fi off.</p>
+    <div class="card">
+      <h1>Toy Theatre</h1>
+      <p>Connecting to the picture…</p>
+      <p id="hint" class="hint" hidden>Slow? Try turning Wi-Fi off.</p>
+    </div>
   </section>
   <section id="lobby" class="screen" hidden>
+    <p class="kicker">Welcome to the Toy Theatre</p>
     <h1>Pick a colour</h1>
-    <p>Your figure walks the riverbank in this colour.</p>
+    <p class="lead">Your figure walks into the picture in this colour.</p>
     <div id="swatches"></div>
-    <p id="lobbyNone" hidden>The bank is full. This list updates when a colour is free.</p>
+    <p id="lobbyNone" class="note" hidden>The picture is full. This list updates when a colour is free.</p>
   </section>
   <section id="walk" class="screen" hidden>
     <p class="padhint">Hold left or right to walk</p>
-    <div id="pad" data-lx="0" role="group" aria-label="Walk pad: hold the left or right half"><span class="l" aria-hidden="true">←</span><span class="r" aria-hidden="true">→</span></div>
-    <button id="verb" class="verb" type="button" aria-disabled="true">Walk to a plaque</button>
-  </section>
-  <section id="plaque" class="screen" hidden>
-    <p id="pFig" class="fig"></p>
-    <h1 id="pTitle"></h1>
-    <div id="ctlLoco" class="ctl" hidden>
-      <div class="row"><label for="lever">Regulator</label><span id="leverV" class="num" aria-hidden="true"></span></div>
-      <input id="lever" type="range" step="1" disabled>
-      <p class="ro" aria-live="polite" aria-atomic="true"><b id="rpm" class="big"></b> rpm</p>
+    <div id="pad" data-lx="0" role="group" aria-label="Walk pad: hold the left or right half">
+      <span class="l" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8"/></svg><em>Left</em></span>
+      <span class="r" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4l8 8-8 8"/></svg><em>Right</em></span>
     </div>
-    <div id="ctlBridge" class="ctl" hidden>
-      <div class="row"><label for="span">Span</label><span id="spanV" class="num" aria-hidden="true"></span></div>
-      <input id="span" type="range" step="1" disabled>
-      <div class="row"><label for="rise">Rise</label><span id="riseV" class="num" aria-hidden="true"></span></div>
-      <input id="rise" type="range" step="0.25" disabled>
-      <div class="ro" aria-live="polite" aria-atomic="true"><p id="verdict"></p><p id="push"></p></div>
-      <button id="export" type="button">Export the arch</button>
+    <button id="verb" class="verb" type="button" aria-disabled="true">Walk to something</button>
+    <div id="art" hidden>
+      <button id="artBtn" type="button" aria-describedby="artNote"><svg class="cam" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="artLabel">Add artwork</span></button>
+      <input id="artFile" type="file" accept="image/*" capture="environment" hidden>
+      <p id="artNote">Your picture is uploaded publicly and read by Google Gemini (free tier).</p>
     </div>
-    <article>
-      <p id="pHead" class="headline"></p>
-      <p id="pBody"></p>
-      <p id="pSource" class="source"></p>
-      <p id="pClosing" class="closing"></p>
-    </article>
-    <button id="done" class="solid" type="button">Done</button>
   </section>
   <section id="full" class="screen" hidden>
-    <h1>The bank is full.</h1>
-    <p>Trying again…</p>
+    <div class="card">
+      <h1>The picture is full.</h1>
+      <p>Trying again…</p>
+    </div>
   </section>
   <section id="evicted" class="screen" hidden>
-    <h1>Your turn on the bank has ended. Thank you.</h1>
-    <button id="again" class="solid" type="button">Join again</button>
+    <div class="card">
+      <h1>Your turn in the picture has ended. Thank you.</h1>
+      <button id="again" class="primary" type="button">Join again</button>
+    </div>
   </section>
   <p id="banner" role="status" hidden>Reconnecting…</p>
   <p id="toast" role="status" aria-live="polite"></p>
 </main>
 <div id="splash" hidden aria-hidden="true"><span>You are</span><b id="splashName"></b></div>
-<div id="orig" hidden><img alt="Rain, Steam, and Speed – The Great Western Railway, J. M. W. Turner, 1844"><p class="tag">Original. The National Gallery, London, NG538.</p></div>
 <script type="module" src="/src/join/main.js"></script>
 </body>
 </html>
