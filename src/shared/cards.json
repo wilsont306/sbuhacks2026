@@ -1,0 +1,29 @@
+{
+  "loco": {
+    "fig": "Fig. 1",
+    "title": "The Locomotive",
+    "headline": "The piston turns the wheel by a crank, not a gear.",
+    "body": "Steam pushes the piston back and forth inside the cylinder; the connecting rod turns each stroke into one turn of the driving wheel. Turner's engine is generally identified as a Firefly-class locomotive, per the National Gallery, with a single pair of 7 ft driving wheels. At 60 mph that wheel turns about 240 times a minute. Move the lever to change the speed.",
+    "source": "Source: The National Gallery, NG538 entry; Grace's Guide, GWR Firefly class.",
+    "closing": "This is a reading of the painting, not a record of the machine.",
+    "draft": true
+  },
+  "bridge": {
+    "fig": "Fig. 2",
+    "title": "The Viaduct",
+    "headline": "Brunel's brick arches at Maidenhead were the flattest in Britain.",
+    "body": "Two 128 ft spans rise only 24 ft 3 in. The directors made Brunel leave the wooden centering in place; he eased it, an autumn storm in 1839 blew it down, and the arches stood. Push the rise up toward a semicircle and the line of thrust leaves the ring at the haunch; bring it back down and the ring holds. Slide the span and rise, then export the arch.",
+    "source": "Source: Maidenhead Railway Bridge records; J. Heyman, The Masonry Arch, 1982.",
+    "closing": "This is a reading of the painting, not a record of the bridge.",
+    "draft": true
+  },
+  "hare": {
+    "fig": "Fig. 3",
+    "title": "The Hare",
+    "headline": "Turner painted the hare about the size of a thumbnail.",
+    "body": "A hare runs along the track ahead of the engine, almost invisible at viewing distance. It is usually read as Turner's comment on speed: the fastest animal in the English countryside against the new machine. This view is the untouched original at full resolution, not a reconstruction.",
+    "source": "Source: The National Gallery, NG538 entry.",
+    "closing": "This is a reading of the painting, not a record of the animal.",
+    "draft": true
+  }
+}

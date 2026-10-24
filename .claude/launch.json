@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hub",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["hub.js"],
+      "port": 8080
+    }
+  ]
+}

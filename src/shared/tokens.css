@@ -1,0 +1,44 @@
+/* Shared design tokens for the TV (host) and the phone (join). Components use these variables only;
+   raw hex values live in this file and nowhere else. Fonts are vendored via @fontsource imports in each entry. */
+:root {
+  /* cyanotype proscenium */
+  --prussian: #123b7a;
+  --prussian-deep: #0b1222;   /* stage background behind the painting */
+  --frame-ink: #e9eef7;       /* text on Prussian blue */
+
+  /* paper and ink */
+  --cream: #f3ecdc;
+  --paper: #f3ebd8;           /* QR quiet zone, wall label */
+  --ink: #1a1814;             /* warm black, QR modules, cut-paper bodies */
+
+  /* brass: primary action and plaques only */
+  --brass: #c9a24b;
+  --brass-ink: #1b1510;
+
+  /* gallery wall and panels */
+  --gunmetal: #171a1f;
+  --steel: #2a3038;
+  --steel-2: #353d47;
+  --muted: #a9b0bb;
+  --ok: #7fc08a;
+  --bad: #e07a5f;
+
+  /* the six player accents, same order as src/shared/slots.json */
+  --slot-1: #c9a24b;
+  --slot-2: #3b5aa6;
+  --slot-3: #c46a7a;
+  --slot-4: #8a5a2b;
+  --slot-5: #5d8a4a;
+  --slot-6: #6b7280;
+  --slot-keyboard: #f3ecdc;   /* pid 0, the kiosk keyboard player */
+
+  --font-display: "IM Fell English", "Iowan Old Style", Georgia, serif;
+  --font-ui: "Libre Franklin", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --fs-body-tv: 28px;         /* minimum body text on the TV at 1080p */
+  --fs-body-phone: 18px;      /* minimum body text on the phone */
+  --margin-w: 236px;          /* proscenium margins either side of the 1447 px stage */
+  --tap: 44px;                /* minimum touch target */
+  --radius: 6px;
+}

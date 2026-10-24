@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Toy Theatre</title>
+</head>
+<body>
+<header>
+  <p id="me" aria-live="polite"></p>
+  <button id="origBtn" type="button">Show the original</button>
+</header>
+<p id="resting" hidden>The screen is resting</p>
+<main>
+  <section id="connecting" class="screen">
+    <h1>Toy Theatre</h1>
+    <p>Connecting to the bank…</p>
+    <p id="hint" class="hint" hidden>Slow? Try turning Wi-Fi off.</p>
+  </section>
+  <section id="lobby" class="screen" hidden>
+    <h1>Pick a colour</h1>
+    <p>Your figure walks the riverbank in this colour.</p>
+    <div id="swatches"></div>
+    <p id="lobbyNone" hidden>The bank is full. This list updates when a colour is free.</p>
+  </section>
+  <section id="walk" class="screen" hidden>
+    <p class="padhint">Hold left or right to walk</p>
+    <div id="pad" data-lx="0" role="group" aria-label="Walk pad: hold the left or right half"><span class="l" aria-hidden="true">←</span><span class="r" aria-hidden="true">→</span></div>
+    <button id="verb" class="verb" type="button" aria-disabled="true">Walk to a plaque</button>
+  </section>
+  <section id="plaque" class="screen" hidden>
+    <p id="pFig" class="fig"></p>
+    <h1 id="pTitle"></h1>
+    <div id="ctlLoco" class="ctl" hidden>
+      <div class="row"><label for="lever">Regulator</label><span id="leverV" class="num" aria-hidden="true"></span></div>
+      <input id="lever" type="range" step="1" disabled>
+      <p class="ro" aria-live="polite" aria-atomic="true"><b id="rpm" class="big"></b> rpm</p>
+    </div>
+    <div id="ctlBridge" class="ctl" hidden>
+      <div class="row"><label for="span">Span</label><span id="spanV" class="num" aria-hidden="true"></span></div>
+      <input id="span" type="range" step="1" disabled>
+      <div class="row"><label for="rise">Rise</label><span id="riseV" class="num" aria-hidden="true"></span></div>
+      <input id="rise" type="range" step="0.25" disabled>
+      <div class="ro" aria-live="polite" aria-atomic="true"><p id="verdict"></p><p id="push"></p></div>
+      <button id="export" type="button">Export the arch</button>
+    </div>
+    <article>
+      <p id="pHead" class="headline"></p>
+      <p id="pBody"></p>
+      <p id="pSource" class="source"></p>
+      <p id="pClosing" class="closing"></p>
+    </article>
+    <button id="done" class="solid" type="button">Done</button>
+  </section>
+  <section id="full" class="screen" hidden>
+    <h1>The bank is full.</h1>
+    <p>Trying again…</p>
+  </section>
+  <section id="evicted" class="screen" hidden>
+    <h1>Your turn on the bank has ended. Thank you.</h1>
+    <button id="again" class="solid" type="button">Join again</button>
+  </section>
+  <p id="banner" role="status" hidden>Reconnecting…</p>
+  <p id="toast" role="status" aria-live="polite"></p>
+</main>
+<div id="splash" hidden aria-hidden="true"><span>You are</span><b id="splashName"></b></div>
+<div id="orig" hidden><img alt="Rain, Steam, and Speed – The Great Western Railway, J. M. W. Turner, 1844"><p class="tag">Original. The National Gallery, London, NG538.</p></div>
+<script type="module" src="/src/join/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Secret gate: blocks a commit that stages a .env file (except .env.example) or adds a likely secret.
+# Enable once per clone: git config core.hooksPath .githooks
+set -f # the patterns and paths below must never glob
+nl='
+'
+# A key's value must start with a letter or digit and not be a placeholder, so the empty lines and
+# HOST_TOKEN=change-me in .env.example, and doc placeholders (=…, =<token>, =$VAR, =%VAR%), pass.
+keys='(HOST_TOKEN|GEMINI_API_KEY|SNOWFLAKE_PASSWORD|ELEVENLABS_API_KEY)=["'\'']?'
+pats='AIza[0-9A-Za-z_-]{35}
+sk-[A-Za-z0-9]{20,}
+-----BEGIN [A-Z ]*PRIVATE KEY-----'
+status=0
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+IFS=$nl
+for f in $files; do
+  case "/$f" in
+    */.env.example) ;;
+    */.env|*/.env.*) echo "pre-commit: $f is a .env file; keep it local and commit .env.example instead" >&2; status=1; continue ;;
+  esac
+  added=$(git diff --cached -U0 --no-color --no-ext-diff -- "$f" | grep -E '^\+' | grep -vE '^\+\+\+ (b/|/dev/null)')
+  [ -n "$added" ] || continue
+  if printf '%s\n' "$added" | grep -E -e "${keys}[A-Za-z0-9]" | grep -qvE -e "${keys}(change-?me|your[-_])"; then
+    echo "pre-commit: $f sets HOST_TOKEN, GEMINI_API_KEY, SNOWFLAKE_PASSWORD or ELEVENLABS_API_KEY to a value" >&2
+    status=1
+  fi
+  for p in $pats; do
+    if printf '%s\n' "$added" | grep -qE -e "$p"; then
+      echo "pre-commit: $f adds a line matching /$p/" >&2
+      status=1
+    fi
+  done
+done
+[ "$status" -eq 0 ] || echo "pre-commit: commit blocked; remove the secret (or unstage the file) and commit again" >&2
+exit "$status"

@@ -1,0 +1,104 @@
+/* The TV page: a fixed 1920 x 1080 frame scaled to fit the window (scene.js sets --fit), letterboxed on the
+   gallery wall. Grid: 236 px label margin | 1447 px stage (the painting's aspect at 1080 px) | 237 px margin.
+   Cyanotype proscenium, cream text, brass only on primary actions and plaques. Tokens only. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--gunmetal); }
+#tv [hidden] { display: none !important; }
+
+#tv {
+  position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+  transform: translate(-50%, -50%) scale(var(--fit, 1));
+  display: grid; grid-template-columns: var(--margin-w) 1447px 1fr;
+  background: var(--prussian); color: var(--cream);
+  font: 400 var(--fs-body-tv)/1.3 var(--font-ui);
+}
+
+/* Margins */
+.margin { display: flex; flex-direction: column; gap: 28px; min-height: 0; overflow: hidden; padding: 32px 16px; }
+.margin.right { padding: 32px 7px 24px 8px; } /* exactly 222 px for the QR */
+.tombstone p { margin: 0; }
+.tombstone .artist { font-weight: 600; }
+.tombstone .life, .tombstone .date, .tombstone .coll { font-size: 22px; }
+.tombstone .title { margin: 14px 0 6px; font: 400 32px/1.2 var(--font-display); }
+#modeTag { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font: 22px/1.3 var(--font-mono); color: var(--frame-ink); }
+#modeTag .judge { padding: 2px 10px; border: 1px solid var(--frame-ink); border-radius: var(--radius); }
+#resting, #qr { margin-top: auto; }
+
+/* Stage */
+#stage { position: relative; overflow: hidden; background: var(--prussian-deep); }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hint, #caption {
+  position: absolute; left: 24px; z-index: 2; max-width: calc(100% - 48px); margin: 0; padding: 6px 14px;
+  border-radius: var(--radius); color: var(--cream); pointer-events: none;
+}
+#hint { top: 20px; background: color-mix(in srgb, var(--prussian-deep) 72%, transparent); }
+#stage:has(.panel.left:not([hidden])) #hint { left: 648px; max-width: calc(100% - 672px); } /* clear of a left panel */
+#stage:has(.panel.left:not([hidden])):has(.panel:not(.left):not([hidden])) #hint { display: none; } /* no room between two */
+#caption { bottom: 20px; background: var(--prussian); } /* everything the team made is captioned in cyanotype blue */
+
+/* Panels */
+.panel {
+  position: absolute; top: 24px; right: 24px; z-index: 3; width: 600px; max-height: calc(100% - 48px); overflow: hidden;
+  padding: 18px 24px 16px; background: var(--steel); color: var(--cream);
+  border: 1px solid var(--steel-2); border-radius: var(--radius);
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 60%, transparent);
+}
+.panel.left { right: auto; left: 24px; }
+.panel h2 { margin: 0 52px 8px 0; font: 400 38px/1.1 var(--font-display); }
+.panel p { margin: 0 0 8px; }
+.panel .headline { font-weight: 600; }
+/* The card's headline and first sentence show for 12 s after the panel opens (scene.js adds .settled), then fade and
+   fold away, leaving the drawing, readouts and operator line; under reduced motion they simply go. */
+.panel .card { overflow: hidden; max-height: 480px; }
+.panel.settled .card { max-height: 0; opacity: 0; visibility: hidden; transition: opacity .8s, max-height .6s .8s, visibility 0s 1.4s; }
+#tv.reduced .panel.settled .card { transition: none; }
+.panel .drawing { margin: 6px 0 10px; }
+.panel canvas, #hareView { display: block; width: 552px; border-radius: 4px 4px 0 0; background-color: var(--prussian-deep); }
+#hareView { height: 310px; margin: 6px 0 10px; border-radius: 4px; background-repeat: no-repeat; }
+/* Engineering-drawing title block under each figure: title, scale bar, source in short, date */
+.titleblock {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 16px; padding: 6px 10px 8px;
+  border: 1px solid var(--steel-2); border-top: 2px solid var(--muted); border-radius: 0 0 4px 4px;
+  background: var(--prussian-deep); font: 20px/1.3 var(--font-ui); color: var(--muted);
+}
+.tb-title { font: 26px/1.2 var(--font-display); color: var(--cream); }
+.tb-scale { display: flex; align-items: center; gap: 8px; justify-self: end; font-family: var(--font-mono); color: var(--frame-ink); }
+.tb-scale .bar { height: 12px; border: 2px solid var(--frame-ink); background: repeating-linear-gradient(90deg, var(--frame-ink) 0 25%, transparent 0 50%); }
+.tb-date { justify-self: end; }
+.panel .source { font: 20px/1.35 var(--font-mono); color: var(--muted); }
+.panel .operator { margin: 0; color: var(--frame-ink); }
+.swatch { display: inline-block; width: 22px; height: 22px; margin: 0 8px -2px 2px; border: 2px solid var(--frame-ink); border-radius: 50%; }
+.row { display: flex; align-items: center; gap: 14px; margin: 6px 0; }
+.row input[type=range] { flex: 1; min-width: 0; height: var(--tap); accent-color: var(--brass); }
+.row input:disabled { cursor: default; } /* a phone operates this plaque: the TV slider shows its value */
+.row .track { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.row .track input[type=range] { flex: none; width: 100%; }
+.ends { display: flex; justify-content: space-between; margin-top: -6px; font: 20px/1 var(--font-mono); color: var(--muted); }
+.row output, .readout { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.row output { min-width: 170px; text-align: right; }
+#rpmOut { font-size: 34px; }
+#archOut, #stlOut { font-family: var(--font-ui); }
+.readout:empty { display: none; }
+.readout.ok { color: var(--ok); }
+.readout.bad { color: var(--bad); }
+.btn {
+  min-height: var(--tap); padding: 8px 20px; border: 0; border-radius: var(--radius);
+  background: var(--brass); color: var(--brass-ink); font: 600 28px/1.2 var(--font-ui); cursor: pointer;
+}
+.btn:disabled { opacity: .45; cursor: default; }
+.close {
+  position: absolute; top: 10px; right: 10px; width: var(--tap); height: var(--tap); padding: 0;
+  border: 0; background: none; color: var(--muted); font: 40px/1 var(--font-ui); cursor: pointer;
+}
+#tv button:focus-visible, #tv input:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+/* Show the original: above everything on the stage */
+#original { position: absolute; inset: 0; z-index: 10; background: var(--prussian-deep) center / contain no-repeat; }
+#original .tag {
+  position: absolute; left: 24px; bottom: 20px; margin: 0; padding: 6px 14px; border-radius: var(--radius);
+  font: 22px/1.3 var(--font-mono); color: var(--cream); background: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+
+/* Path debug overlay (backtick) */
+.path-overlay { position: absolute; inset: 0; z-index: 5; width: 100%; height: 100%; cursor: crosshair; }
+.path-save { position: absolute; top: 20px; right: 24px; z-index: 6; }

@@ -1,0 +1,25 @@
+/* What glue.js draws inside the margins: #roster (left), #hud, #qr and #resting (right). Tokens only. */
+#qr[hidden], #resting[hidden] { display: none !important; } /* host.html may give these a display; hidden must win */
+
+#roster h2 { margin: 0 0 12px; font: 400 32px/1.15 var(--font-display); color: var(--frame-ink); }
+#roster ul { margin: 0; padding: 0; list-style: none; }
+#roster li { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; font: 28px/1.2 var(--font-ui); color: var(--frame-ink); }
+#roster li.away { opacity: .5; }
+#roster .fig { color: var(--brass); }
+#roster .dot { width: 20px; height: 20px; margin-top: 7px; }
+#roster .dot, #hud .dot { flex: none; display: inline-block; border-radius: 50%; }
+
+/* Operator status, not visitor text: one line has to fit the 236 px margin. */
+#hud .line { display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; font: 18px/1.35 var(--font-ui); font-variant-numeric: tabular-nums; color: var(--frame-ink); }
+#hud .dot { width: 14px; height: 14px; }
+#hud .ok { background: var(--ok); }
+#hud .bad { background: var(--bad); }
+#hud .more { margin-top: 6px; font: 15px/1.4 var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }
+
+#qr figure { margin: 0 0 16px; }
+#qr canvas { display: block; max-width: none; image-rendering: pixelated; }
+#qr figcaption { margin-top: 8px; font: 28px/1.2 var(--font-ui); color: var(--frame-ink); white-space: pre-wrap; }
+#qr .url { display: block; margin-top: 4px; color: var(--muted); overflow-wrap: anywhere; }
+
+#resting .rest { margin: 0; font: 32px/1.25 var(--font-display); color: var(--frame-ink); }
+#resting .rest small { display: block; margin-top: 12px; font: 28px/1.25 var(--font-ui); color: var(--muted); }
