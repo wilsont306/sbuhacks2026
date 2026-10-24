@@ -235,6 +235,7 @@ test('check snowflake: a PAT-only env (no user, no key) passes the real configur
 test('check storage: whether BLOB_READ_WRITE_TOKEN is set', async () => {
   assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: 'fake-blob-token' } }).ask('storage')).body, { ok: true, using: 'team', detail: 'Blob storage is connected' });
   assert.deepEqual((await make({ env: { BLOB_READ_WRITE_TOKEN: '  ' } }).ask('storage')).body, { ok: false, using: 'none', detail: 'No Blob store connected' });
+  assert.deepEqual((await make({ env: { BLOB_STORE_ID: 'store_fake123' } }).ask('storage')).body, { ok: true, using: 'team', detail: 'Blob storage is connected' });
 });
 
 test('check: 10 checks a minute per client, then 429; other clients and the next minute are fine', async () => {

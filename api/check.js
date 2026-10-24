@@ -130,7 +130,8 @@ export function createHandler(deps = {}) {
     }
     if (!isHost(req)) return TV_ONLY;
     if (service === 'storage') {
-      return String(env.BLOB_READ_WRITE_TOKEN ?? '').trim()
+      // A newer store connects by BLOB_STORE_ID (OIDC, which @vercel/blob uses on its own) instead of a token.
+      return String(env.BLOB_READ_WRITE_TOKEN ?? '').trim() || String(env.BLOB_STORE_ID ?? '').trim()
         ? { ok: true, using: 'team', detail: 'Blob storage is connected' }
         : { ok: false, using: 'none', detail: 'No Blob store connected' };
     }
