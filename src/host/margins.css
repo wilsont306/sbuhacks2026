@@ -18,6 +18,11 @@
 #label .artist { -webkit-line-clamp: 2; margin-top: 10px; font: 600 20px/1.2 var(--font-ui); color: var(--ink); }
 #label .chip { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule-ink); font: 400 18px/1.25 var(--font-ui); color: var(--ink-soft); }
 #label .labels-note { display: none; font: 400 20px/1.25 var(--font-ui); color: var(--ink-soft); }
+/* The credit, the sign's small print: 5 lines at most (the title attribute keeps it whole), never hidden by X. */
+#label .credit {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden;
+  margin-top: 6px; font: 400 16px/1.25 var(--font-ui); color: var(--ink-soft);
+}
 #tv.labels-off #label .ai, #tv.labels-off #legend { display: none; }
 #tv.labels-off #label .labels-note { display: block; }
 

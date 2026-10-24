@@ -42,8 +42,8 @@ export function stamp(at) {
   return str(at, 40);
 }
 
-// What the station sign and the source block show for a scene; null when there is none. (The credit is the
-// original's, under O; the stops come from the scene's objects.)
+// What the station sign and the source block show for a scene; null when there is none. (The stops come from the
+// scene's objects.)
 export function labelOf(scene) {
   if (!scene || typeof scene !== 'object') return null;
   // the validator writes 'unknown' when Gemini gave no guess
@@ -52,6 +52,7 @@ export function labelOf(scene) {
     artist: guess(scene.artist_guess, 'Artist'),
     title: guess(scene.title_guess, 'Title'),
     chip: chipText(scene),
+    credit: str(scene.credit, 300),
     thumb: safeUrl(scene.image_url),
   };
 }
@@ -238,6 +239,8 @@ function renderScene() {
   els.label.replaceChildren(...(m ? [
     full(h('p', 'title ai', main)), ...(sub ? [full(h('p', 'sub ai', sub))] : []), full(h('p', 'artist ai', m.artist)),
     h('p', 'chip ai', m.chip), h('p', 'labels-note', 'AI labels hidden'),
+    // The picture's credit, always on screen: a living artist's work is only shown with it. Not a guess, so X keeps it.
+    ...(m.credit ? [full(h('p', 'credit', m.credit))] : []),
   ] : []));
   // The stops, in the order the figures reach them (scene.js's stops: the same objects, the same labels). Built once
   // per scene, so a saved badge changing never closes an open description.
