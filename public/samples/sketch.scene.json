@@ -5,6 +5,7 @@
  "credit": "Sample sketch drawn for this demo.",
  "image_url": "/samples/sketch.svg",
  "scene_url": "",
+ "depth_url": "/samples/sketch.depth.png",
  "model": "hand-corrected",
  "generated_at": "2026-10-24T09:00:00.000Z",
  "ai_draft": true,

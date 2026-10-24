@@ -70,11 +70,11 @@ main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction
 .swatch:active { transform: translateY(2px); box-shadow: none; }
 .note { margin: 16px 0 0; padding: 16px; border-radius: var(--radius-card); background: var(--cream); color: var(--ink); text-align: center; }
 
-/* ---- walk: the pad, the verb, Add artwork ---- */
-#walk { display: grid; grid-gap: 16px; gap: 16px; grid-template: "hint" auto "pad" 1fr "verb" auto "art" auto / 1fr; }
+/* ---- walk: the pad, the verb, Step inside, Add artwork ---- */
+#walk { display: grid; grid-gap: 16px; gap: 16px; grid-template: "hint" auto "pad" 1fr "verb" auto "inside" auto "art" auto / 1fr; }
 .padhint { grid-area: hint; margin: 0; font-size: 18px; text-align: center; opacity: .85; }
 #pad {
-  grid-area: pad; position: relative; display: flex; min-height: 168px; overflow: hidden; border-radius: calc(var(--radius-card) * 2);
+  grid-area: pad; position: relative; display: flex; min-height: 120px; overflow: hidden; border-radius: calc(var(--radius-card) * 2);
   background: var(--cream); color: var(--ink); touch-action: none; box-shadow: var(--shadow-card);
 }
 #pad * { pointer-events: none; }
@@ -95,9 +95,10 @@ main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction
 .verb[aria-disabled="true"] { background: transparent; color: var(--frame-ink); border: 2px dashed var(--frame-ink); box-shadow: none; transform: none; font-weight: 400; }
 
 #art { grid-area: art; text-align: center; }
-#artBtn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 56px; }
+#insideBtn { grid-area: inside; }
+#artBtn, #insideBtn { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 56px; }
 .cam { flex: none; width: 26px; height: 26px; margin-right: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
-#artBtn:disabled { border-style: dashed; cursor: default; opacity: .75; }
+#artBtn:disabled, #insideBtn:disabled { border-style: dashed; cursor: default; opacity: .75; }
 #artNote { margin: 8px 0 0; font-size: 18px; line-height: 1.35; opacity: .85; }
 
 /* ---- status pills: Reconnecting at the top, toasts at the bottom (main already sits inside the safe area) ---- */
@@ -124,7 +125,7 @@ body.joined::after { content: ''; position: fixed; top: 0; right: 0; bottom: 0; 
   h1, #lobby h1 { font-size: 28px; }
   .kicker { display: none; }
   .card { padding: 24px; }
-  #walk { grid-template: "hint hint" auto "pad verb" 1fr "pad art" auto / 3fr 2fr; }
+  #walk { grid-template: "hint hint" auto "pad verb" 1fr "pad inside" auto "pad art" auto / 3fr 2fr; }
   #pad { min-height: 0; }
   #swatches { grid-template-columns: 1fr 1fr; }
 }

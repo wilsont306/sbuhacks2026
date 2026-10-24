@@ -8,15 +8,17 @@ nl='
 # A key's value, and a Redis URL's password, must start with a letter or digit and not be a placeholder,
 # so the empty lines and HOST_TOKEN=change-me in .env.example, and doc placeholders (=…, =<token>, =$VAR,
 # =%VAR%, rediss://default:…@host), pass. KV_URL also covers names ending in it.
-names='HOST_TOKEN|GEMINI_API_KEY|SNOWFLAKE_PASSWORD|SNOWFLAKE_PRIVATE_KEY|ELEVENLABS_API_KEY|REDIS_URL|KV_URL|UPSTASH_KV_URL|BLOB_READ_WRITE_TOKEN'
+names='HOST_TOKEN|GEMINI_API_KEY|SNOWFLAKE_PASSWORD|SNOWFLAKE_PRIVATE_KEY|ELEVENLABS_API_KEY|TRIPO_API_KEY|REDIS_URL|KV_URL|UPSTASH_KV_URL|BLOB_READ_WRITE_TOKEN'
 keys="($names)=[\"']?"
 redis='rediss?://[^ :]*:'
 placeholder='(change-?me|your[-_])'
 keylist=$(printf '%s\n' "$names" | sed 's/|/, /g')
-# Secrets wherever they appear: Google (Gemini) key, sk- key, ElevenLabs sk_ key, Vercel Blob token, PEM private key.
+# Secrets wherever they appear: Google (Gemini) key, sk- key, ElevenLabs sk_ key, Tripo tsk_ key, Vercel Blob token,
+# PEM private key. The test fakes put a dot early on (tsk_FAKE.…), so they pass.
 pats='AIza[0-9A-Za-z_-]{35}
 sk-[A-Za-z0-9]{20,}
 sk_[0-9a-f]{32,}
+tsk_[A-Za-z0-9_-]{20,}
 vercel_blob_rw_[A-Za-z0-9_]+
 -----BEGIN [A-Z ]*PRIVATE KEY-----'
 status=0

@@ -44,6 +44,15 @@ const startT = (pid) => (pid === 0 ? MIN_T : MIN_T + 0.012 * (((pid - 1) % 6) + 
 const okUrl = (u) => typeof u === 'string' && (/^data:image\//i.test(u) || (u.length <= 2048 && /^(https?:\/\/|\/(?!\/)|blob:)/i.test(u)));
 // Depth and id texels for an aspect: TEXELS on the long side.
 const texels = (aspect) => (aspect >= 1 ? { w: TEXELS, h: Math.max(2, Math.round(TEXELS / aspect)) } : { w: Math.max(2, Math.round(TEXELS * aspect)), h: TEXELS });
+// A depth image (enrich.js: one byte per pixel, rows top first, 255 nearest) in depth.js's layout (rows bottom-up, 0 far
+// to 1 near), or null when it is not one. Unblurred, as v1 used Depth Anything's output.
+function reliefOf(d) {
+  const w = d && d.w, h = d && d.h;
+  if (!d || !ArrayBuffer.isView(d.data) || !Number.isInteger(w) || !Number.isInteger(h) || w < 2 || h < 2 || w > MAX_TEX || h > MAX_TEX || d.data.length !== w * h) return null;
+  const data = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) data[j * w + i] = d.data[(h - 1 - j) * w + i] / 255;
+  return { data, w, h, placeholder: false };
+}
 
 // [dx, dy, dz, shear at the object's top, glow] in world units for a motion kind at time t; hw is the object's height.
 function motionAt(kind, t, ph, hw) {
@@ -72,6 +81,7 @@ const players = new Map(); // pid -> figure
 let W = H * TURNER, lens = rig(W, H, SW / SH); // camera.js: the follow math, swept by tests/camera.test.js
 let current = null, stops = [], path = null, curve = null, depth = null, sample = () => 0.5, sheets = null;
 let imageUrl = BOOT_IMG, credit = BOOT_CREDIT, gen = 0; // gen: the latest loadScene/showImage; an older one never lands
+let depthFromAi = false; // setDepth re-skinned the relief with an estimated depth image; build() clears it
 let layer = 'painting', judge = false, reduced = matchMedia('(prefers-reduced-motion: reduce)').matches, originalTimer = 0;
 let simTime = 0, fps = 0, notice = '';
 const attract = { idle: 0, on: false, lean: 0 };
@@ -180,12 +190,12 @@ function build(tex, aspect, d, ids, points, newStops) {
   swapTex('map', tex);
   swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
   swapTex('idMap', idTexture(ids));
-  depth = d; sample = sampler(d); stops = newStops;
+  depth = d; sample = sampler(d); stops = newStops; depthFromAi = false;
   if (notice === NO_IMAGE) notice = '';
   setPath({ image: imageUrl, points, plaques: stops });
   moveA.fill(0); moveB.fill(0); pokeLeft.fill(0);
   for (const [pid, f] of players) {
-    f.t = startT(pid);
+    f.t = startT(pid); f.facing = 1; // as reset() does: an inside phone takes its heading from this
     if (f.near != null) { f.near = null; emit({ type: 'near', pid, object: null, label: null }); }
     place(f);
   }
@@ -254,6 +264,7 @@ function renderHint() {
   if (hintEl.textContent !== text) hintEl.textContent = text;
 }
 function depthLine() {
+  if (current && depthFromAi) return 'Depth map: estimated from the picture by Depth Anything V2 (AI estimate)';
   if (current) return current.edited ? 'Depth map: from a hand-corrected reading (sample)' : `Depth map: from ${current.model}'s reading (AI draft)`;
   return depth && depth.placeholder ? 'Depth map: hand-authored placeholder, 2026' : 'Depth map: flat until the reading lands';
 }
@@ -281,6 +292,19 @@ function stopAttract() { attract.on = false; attract.lean = 0; renderCaption(); 
 function wake() { attract.idle = 0; if (attract.on) stopAttract(); }
 
 // ---------- window.game ----------
+// The README's window.game table, plus three calls for what arrives after a scene is on stage (src/host/enrich.js and
+// the 3D models): setDepth(depth) re-skins the relief with a depth image ({data: Uint8Array, w, h}, one byte per pixel,
+// rows top first, 255 nearest), its texture, sampler and path heights, leaving the figures, stops and camera where they
+// are (false for a bad image or no scene). setSceneField('depth_url', url) and setObjectModel(index, url) set that field
+// on the scene game.scene() returns, through validateScene (false when the URL does not pass), and emit
+// {type:'enriched', scene}. onHotspot takes any number of listeners.
+const ENRICH_FIELDS = ['depth_url'];
+function enriched(next, ok) {
+  if (!ok) return false;
+  current = next;
+  emit({ type: 'enriched', scene: current });
+  return true;
+}
 const game = window.game = {
   addPlayer(pid, name, color) {
     pid = Number(pid);
@@ -366,6 +390,30 @@ const game = window.game = {
     return o;
   },
   stats: () => ({ fps, zoom: Math.round(cam.zoom * 100) / 100, lean: Math.round(cam.lean * 10) / 10, layer }),
+  // [{pid, t, facing}] for every joined figure (pid 0, the keyboard, included): glue.js sends them to inside phones.
+  positions: () => [...players].map(([pid, f]) => ({ pid, t: f.t, facing: f.facing })),
+  setDepth(raw) {
+    const d = current && reliefOf(raw);
+    if (!d) return false;
+    swapTex('depthMap', renderer ? depthTexture(renderer, d) : null);
+    depth = d; sample = sampler(d); depthFromAi = true;
+    // the walk keeps its points (and any overlay edit), standing at the new heights as pathPoints would place them
+    path.points = path.points.map(([u, v]) => [u, v, Math.round(clamp(sample(u, v), 0, 1) * 1e4) / 1e4]);
+    setPath(path);
+    renderCaption();
+    return true;
+  },
+  setSceneField(key, value) {
+    if (!current || !ENRICH_FIELDS.includes(key)) return false;
+    const next = validateScene({ ...current, [key]: value });
+    return enriched(next, next[key] === value);
+  },
+  setObjectModel(index, url) {
+    const i = Number(index);
+    if (!current || !Number.isInteger(i) || !current.objects[i]) return false;
+    const next = validateScene({ ...current, objects: current.objects.map((o, k) => (k === i ? { ...o, model_url: url } : o)) });
+    return enriched(next, next.objects[i] && next.objects[i].model_url === url);
+  },
 };
 
 // ---------- follow camera ----------
@@ -445,7 +493,7 @@ function frame(now) {
   if (fpsT >= 0.5) { fps = Math.round(frames / fpsT); frames = fpsT = 0; if (layer !== 'painting') renderTag(); }
 }
 
-// ---------- input: scene owns ← → Space Enter Esc O W M ` A (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X) ----------
+// ---------- input: scene owns ← → Space Enter Esc O W M ` A (artwork owns G U 1 2 3, glue H J R Q, audio S, margins L X, models3d D, apibox K) ----------
 const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 const kb = () => game.setInput(0, keys.right - keys.left, keys.verb ? 1 : 0);
 addEventListener('keydown', (e) => {

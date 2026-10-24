@@ -78,25 +78,39 @@ test('platformLines: one line per platform, in order', () => {
     hub: { t: 'hub', region: 'iad1', instance: 'abcdef123456', bus: 'redis' },
     scene: { model: 'gemini-3.5-flash-lite', generated_at: local(14, 5) },
     saved: 'saved', id: 'p-42', audio: { played: 3, generated: 1, cached: 2 },
+    depth: { state: 'ready', device: 'webgpu', ms: 812 }, models: { on: true, ready: 1, running: 1, failed: 0, last: 'running' },
   });
   assert.deepEqual(lines, [
     { name: 'Vercel', text: 'relay iad1 · instance abcdef12 · bus Upstash Redis' },
     { name: 'Gemini', text: 'gemini-3.5-flash-lite · read at 14:05' },
     { name: 'ElevenLabs', text: 'played 3 · generated 1 · cached 2' },
     { name: 'Snowflake', text: 'project p-42 · Saved to Snowflake' },
+    { name: 'Depth Anything V2', text: 'webgpu · ready · 812 ms' },
+    { name: 'Tripo', text: '1 ready · 1 running' },
   ]);
+});
+
+test('platformLines: depth and Tripo lines before anything ran, when off, and with junk stats', () => {
+  const t = (o) => m.platformLines(o).slice(4).map((l) => l.text);
+  assert.deepEqual(t({}), ['— · idle · 0 ms', 'off']);
+  assert.deepEqual(t({ depth: { state: 'idle', device: null, ms: 0 }, models: { on: true, ready: 0, running: 0, failed: 0, last: '' } }),
+    ['— · idle · 0 ms', '0 ready · 0 running']);
+  assert.deepEqual(t({ depth: { state: 'saved', device: 'file', ms: 40 }, models: { on: false, ready: 2, running: 0 } }), ['file · saved · 40 ms', 'off']);
+  assert.deepEqual(t({ models: { on: true, ready: 0, running: 0, last: 'off' } }).slice(1), ['off'], 'the server has no Tripo key');
+  assert.deepEqual(t({ depth: { state: 7, device: 'wasm\nq8', ms: -3 }, models: { on: true, ready: NaN, running: '2' } }),
+    ['wasm q8 · idle · 0 ms', '0 ready · 0 running']);
 });
 
 test('platformLines: laptop relay, samples, nothing yet, and bad stats', () => {
   const t = (o) => m.platformLines(o).map((l) => l.text);
   assert.deepEqual(t({ hub: { region: 'local', instance: 'x1', bus: 'local' }, scene: { edited: true, model: 'hand-corrected' },
-    saved: 'sample', id: 'sample-turner', audio: { played: -1, generated: NaN, cached: '9' } }), [
+    saved: 'sample', id: 'sample-turner', audio: { played: -1, generated: NaN, cached: '9' } }).slice(0, 4), [
     'laptop relay (Q) · instance x1 · bus local',
     'sample, edited (hand-corrected)',
     'played 0 · generated 0 · cached 0',
     'project sample-turner · sample',
   ]);
-  assert.deepEqual(t({}), ['relay not connected', 'no reading on screen', 'played 0 · generated 0 · cached 0', 'project — · not saved']);
+  assert.deepEqual(t({}).slice(0, 4), ['relay not connected', 'no reading on screen', 'played 0 · generated 0 · cached 0', 'project — · not saved']);
   assert.deepEqual(t({ hub: { region: 'iad1', bus: 'local' } }).slice(0, 1), ['relay iad1 · instance — · bus local']);
 });
 

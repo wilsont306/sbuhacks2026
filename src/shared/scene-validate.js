@@ -113,6 +113,15 @@ function maskOf(raw, box, frame) {
   return area >= Math.max(MIN_MASK_AREA, MIN_MASK_SHARE * (x1 - x0) * (y1 - y0)) ? out : null;
 }
 
+// An optional asset (an object's 3D model, the scene's depth image): an https URL or a site-relative path ('/' not
+// followed by '/' or '\'), at most 300 characters with no whitespace, else none.
+function assetUrl(v) {
+  if (typeof v !== 'string' || v.length > 300 || /\s/.test(v)) return null;
+  if (/^\/(?![/\\])/.test(v)) return v;
+  if (!/^https:\/\//i.test(v)) return null;
+  try { return new URL(v).protocol === 'https:' ? v : null; } catch { return null; }
+}
+
 function objectOf(o, maskFrame, palette, index) {
   if (!isObj(o)) return null;
   // Only Gemini's raw shape carries box_2d; anything else is a stored scene whose mask is already image space.
@@ -124,7 +133,7 @@ function objectOf(o, maskFrame, palette, index) {
   const kind = pick(o.kind, KINDS, 'object');
   const d = num(o.depth);
   const depth = fin(d) ? clamp(d, 0, 1) : clamp(1 - box[3] / 1000, 0, 1);
-  return {
+  const out = {
     label: text(o.label, LIMITS.label) || kind,
     kind,
     box,
@@ -134,6 +143,9 @@ function objectOf(o, maskFrame, palette, index) {
     motion: pick(o.motion, MOTIONS, 'none'),
     sound_prompt: words(o.sound_prompt, LIMITS.soundWords, 120),
   };
+  const model = assetUrl(o.model_url);
+  if (model) out.model_url = model;
+  return out;
 }
 
 function groundPath(raw) {
@@ -158,7 +170,7 @@ function build(r, m, maskFrame) {
     if (objects.length === LIMITS.objects) break;
   }
   const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
-  return {
+  const out = {
     id: str(first(m.id, r.id), 128),
     source: pick(first(m.source, r.source), SOURCES, 'drop'),
     edited: first(m.edited, r.edited) === true,
@@ -174,6 +186,10 @@ function build(r, m, maskFrame) {
     ground_path: groundPath(r.ground_path),
     objects,
   };
+  // The TV's depth image for this picture (Depth Anything V2, see src/host/enrich.js); like model_url, never from Gemini.
+  const depth = assetUrl(r.depth_url);
+  if (depth) out.depth_url = depth;
+  return out;
 }
 
 // raw: Gemini's parsed answer (or its JSON text, or a stored scene). meta: {id, source, image_url, scene_url, model,

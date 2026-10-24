@@ -38,7 +38,7 @@ let hostSeen = 0, rollT, rollWaitT; // hostSeen: last message that came from the
 // ---- screens ----
 function show(s) {
   if (s === state) return;
-  if (s !== 'walk') zero();
+  if (s !== 'walk') { leaveInside(false); zero(); } // the socket is gone or seatless: nothing to tell the host
   state = s;
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== s;
   clearInterval(fullT);
@@ -96,6 +96,7 @@ function welcome(m) {
     clearTimeout(splashT); splashT = setTimeout(() => { $('splash').hidden = true; }, 3000);
   }
   show('walk');
+  if (inside) inside.again();
   armRoll();
 }
 
@@ -236,6 +237,11 @@ function onMsg(m) {
   else if (t === 'mode') { show('walk'); if (m.mode === 'reset') near(null); } // 'walk' | 'reset': walk is the only seated screen
   else if (t === 'near') near(m.label);
   else if (t === 'readout') { if (m.text) toast(String(m.text)); }
+  else if (t === 'world' || t === 'pos') {
+    if (inside) inside.msg(m);
+    // pos for a closed view: the host missed our Back, so say it again (at most every 5 s)
+    else if (t === 'pos' && Date.now() - outSent >= 5000 && send({ t: 'panel', kind: 'inside', value: 0 })) outSent = Date.now();
+  }
 }
 
 // ---- input: hold-to-walk pad and verb button ----
@@ -246,6 +252,7 @@ function setIn(nlx, na) {
   lx = nlx; a = na;
   pad.setAttribute('data-lx', lx);
   verb.classList.toggle('down', !!a);
+  if (inside) inside.input(lx, a);
   pushIn();
 }
 function pushIn() {
@@ -310,6 +317,37 @@ $('origBtn').onclick = () => {
   toast('The original shows on the screen once it is back');
 };
 $('again').onclick = start;
+
+// ---- Step inside: the TV's picture as a world seen from this figure (./inside.js, a lazy chunk with three.js) ----
+// The host answers {t:'panel', kind:'inside', value:1} with {t:'world'} and then {t:'pos'} whenever it changes (and
+// every 3 s); value 2 re-asserts after a welcome and gets the world only if it changed; 'look' is idle-kick activity.
+const insideBtn = $('insideBtn'), insideLabel = $('insideLabel'), INSIDE_LABEL = insideLabel.textContent;
+let inside = null, outSent = 0; // outSent: the last inside 0 this phone sent
+insideBtn.onclick = () => {
+  if (inside || insideBtn.disabled) return;
+  insideBtn.disabled = true; insideLabel.textContent = 'Opening…';
+  import('./inside.js')
+    .then((mod) => {
+      if (state !== 'walk' || inside) return;
+      zero();
+      inside = mod.open({
+        setLx: (v) => setIn(v, a), setA: (v) => setIn(lx, v), // the pad's own input: same heartbeat, same release rules
+        ask: () => send({ t: 'panel', kind: 'inside', value: 1 }),
+        reassert: () => send({ t: 'panel', kind: 'inside', value: 2 }),
+        look: () => send({ t: 'panel', kind: 'look', value: 1 }),
+        back: () => leaveInside(true), toast,
+      });
+    })
+    .catch(() => toast('Couldn’t open the inside view; try again'))
+    .then(() => { insideBtn.disabled = false; insideLabel.textContent = INSIDE_LABEL; });
+};
+function leaveInside(tell) {
+  if (!inside) return;
+  const v = inside;
+  inside = null;
+  v.close(); zero();
+  if (tell) { if (send({ t: 'panel', kind: 'inside', value: 0 })) outSent = Date.now(); insideBtn.focus(); }
+}
 
 // ---- Add artwork: photo -> downscale -> /api/interpret -> the scene URL to the host as {t:'panel', kind:'artwork'} ----
 // Only over https: the laptop hub serves no /api/interpret.

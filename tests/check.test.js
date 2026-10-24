@@ -8,6 +8,9 @@ const TEAM = 'FAKE_team_key_0123456789abc';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1';
 const SUB_URL = 'https://api.elevenlabs.io/v1/user/subscription';
 const MODELS_URL = 'https://api.elevenlabs.io/v1/models';
+const TRIPO_URL = 'https://openapi.tripo3d.ai/v3/account/balance';
+// A dot early on keeps the pre-commit hook's tsk_ pattern from taking these fakes for real keys.
+const TRIPO_YOURS = 'tsk_FAKE.visitor.key.0002', TRIPO_TEAM = 'tsk_FAKE.team.key.0001';
 const never = () => new Promise(() => {});
 
 // Answers by URL: {status, json}, 'hang' or 'throw'; records every call.
@@ -143,6 +146,47 @@ test('check elevenlabs: the team key, with a note when SOUND_GEN is off; none wi
   assert.equal(none.calls.length, 0);
 });
 
+test('check tripo: your key, else the team key, else none; the balance is the credits, as a float', async () => {
+  const balance = (data) => ({ [TRIPO_URL]: { status: 200, json: { code: 0, data } } });
+  const { ask, calls } = make({ env: { TRIPO_API_KEY: TRIPO_TEAM }, routes: balance({ balance: 1234.5, frozen: 30 }) });
+  let r = await ask('tripo', { headers: { 'x-tripo-key': ` ${TRIPO_YOURS} ` } });
+  assert.deepEqual(r.body, { ok: true, using: 'yours', credits: 1234.5, detail: 'Tripo accepted the key; 1234.5 credits left' });
+  assert.deepEqual(calls.map((c) => [c.url, c.headers]), [[TRIPO_URL, { Authorization: `Bearer ${TRIPO_YOURS}` }]]);
+  r = await ask('tripo');
+  assert.deepEqual([r.body.ok, r.body.using, r.body.credits], [true, 'team', 1234.5]);
+  assert.deepEqual(calls[1].headers, { Authorization: `Bearer ${TRIPO_TEAM}` });
+  const mine = { headers: { 'x-tripo-key': TRIPO_YOURS } };
+  assert.equal((await make({ routes: balance({ balance: '88.25' }) }).ask('tripo', mine)).body.credits, 88.25);
+  assert.deepEqual((await make({ routes: balance({}) }).ask('tripo', mine)).body, { ok: true, using: 'yours', credits: null, detail: 'Tripo accepted the key' });
+
+  const none = make();
+  r = await none.ask('tripo');
+  assert.deepEqual([r.body.ok, r.body.using], [false, 'none']);
+  assert.match(r.body.detail, /No Tripo key on this server/);
+  r = await none.ask('tripo', { headers: { 'x-tripo-key': YOURS } });
+  assert.deepEqual(r.body, { ok: false, using: 'yours', detail: 'That does not look like a Tripo key' }, 'a key without tsk_ is malformed');
+  assert.equal(none.calls.length, 0);
+});
+
+test('check tripo: refusals, an error code, other statuses and no answer are short, safe details', async () => {
+  const echo = { code: 1002, message: `bad key ${TRIPO_YOURS} ${TRIPO_TEAM}` };
+  const cases = [
+    [{ status: 401, json: echo }, /^Tripo refused the key$/], [{ status: 403, json: { code: 2010 } }, /refused/],
+    [{ status: 200, json: echo }, /^Tripo answered with an error$/], [{ status: 200, json: null }, /answered with an error/],
+    [{ status: 429 }, /over its limit/], [{ status: 500 }, /^Tripo answered HTTP 500$/],
+    ['hang', /^Tripo did not answer in \d+ s$/], ['throw', /^Could not reach Tripo$/],
+  ];
+  for (const [route, want] of cases) {
+    const { ask, seen } = make({ env: { TRIPO_API_KEY: TRIPO_TEAM }, routes: { [TRIPO_URL]: route } });
+    for (const headers of [{ 'x-tripo-key': TRIPO_YOURS }, {}]) {
+      const r = await ask('tripo', { headers });
+      assert.deepEqual([r.status, r.body.ok, r.body.credits], [200, false, null]);
+      assert.match(r.body.detail, want);
+    }
+    for (const s of seen) assert.ok(!s.includes(TRIPO_YOURS) && !s.includes(TRIPO_TEAM), s);
+  }
+});
+
 test('check snowflake: team only, configured() then one listProjectsResult row', async () => {
   const asked = [];
   const sf = (result) => async () => ({ configured: (env) => env.SNOWFLAKE_ACCOUNT === 'acct', listProjectsResult: (n, opts) => { asked.push([n, opts.env.SNOWFLAKE_ACCOUNT]); return result(); } });
@@ -200,14 +244,17 @@ test('check: no reply and no console line ever carries a key, even when upstream
 });
 
 test('check: team answers only to the TV (x-host-token) when HOST_TOKEN is set; a visitor key works for anyone', async () => {
-  const env = { HOST_TOKEN: 'tvtoken123', GEMINI_API_KEY: 'AIzaTEAMTEAMTEAMTEAMTEAM0000', BLOB_READ_WRITE_TOKEN: 'x' };
+  const env = { HOST_TOKEN: 'tvtoken123', GEMINI_API_KEY: 'AIzaTEAMTEAMTEAMTEAMTEAM0000', TRIPO_API_KEY: TRIPO_TEAM, BLOB_READ_WRITE_TOKEN: 'x' };
   const { ask } = make({ env, routes: { [GEMINI_URL]: { status: 200, json: {} } } });
   const tvOnly = { ok: false, using: 'none', detail: 'Team checks run from the TV only' };
   assert.deepEqual((await ask('gemini')).body, tvOnly);
   assert.deepEqual((await ask('storage')).body, tvOnly);
+  assert.deepEqual((await ask('tripo')).body, tvOnly);
   assert.deepEqual((await ask('snowflake', { headers: { 'x-host-token': 'wrong' } })).body, tvOnly);
   assert.equal((await ask('gemini', { headers: { 'x-host-token': 'tvtoken123' } })).body.using, 'team');
   assert.equal((await ask('storage', { headers: { 'x-host-token': 'tvtoken123' } })).body.ok, true);
   const mine = (await ask('gemini', { headers: { 'x-gemini-key': YOURS } })).body;
   assert.deepEqual([mine.ok, mine.using], [true, 'yours']);
+  assert.deepEqual((await ask('tripo', { headers: { 'x-tripo-key': TRIPO_YOURS } })).body.using, 'yours');
+  assert.equal((await ask('tripo', { headers: { 'x-host-token': 'tvtoken123' } })).body.using, 'team');
 });

@@ -62,3 +62,51 @@ test('QR scale: integer px per module, at most 222 px with the quiet zone', () =
   assert.equal(g.qrScale(45), 4); // version 7: 212 px
   for (const n of [21, 25, 29, 33, 37, 41, 45]) assert.ok((n + 8) * g.qrScale(n) <= 222);
 });
+
+test('world message: the scene inline with an image the phone can load, else nothing to step into', () => {
+  const NO = { t: 'world', scene: null, reason: 'This picture can’t be entered yet' };
+  const s = (image_url, extra = {}) => ({ id: 'a', image_url, objects: [], ...extra });
+  const blob = 'https://x.public.blob.vercel-storage.com/art/a.jpg';
+  assert.deepEqual(g.worldMsg(s(blob)), { t: 'world', scene: s(blob), image: blob });
+  assert.equal(g.worldMsg(s('/assets/turner-1920.jpg')).image, '/assets/turner-1920.jpg');
+  assert.equal(g.worldMsg(s('HTTP://192.168.1.5/samples/sketch.svg')).image, 'HTTP://192.168.1.5/samples/sketch.svg');
+  for (const bad of ['data:image/jpeg;base64,AAAA', 'blob:https://a/b', '', '//evil.example/x.jpg', '/\\evil.example/x.jpg', 'javascript:alert(1)', null]) {
+    assert.deepEqual(g.worldMsg(s(bad)), NO, String(bad));
+  }
+  assert.deepEqual(g.worldMsg(null), NO); // the boot Turner and the flat state
+  const pad = (n) => s('/a.jpg', { pad: 'x'.repeat(n - JSON.stringify(s('/a.jpg', { pad: '' })).length) });
+  assert.equal(JSON.stringify(pad(48000)).length, 48000);
+  assert.equal(g.worldMsg(pad(48000)).image, '/a.jpg');
+  assert.deepEqual(g.worldMsg(pad(48001)), NO);
+});
+
+test('world due: inside 1 always answers, 2 only when the world changed since the last one sent, else nothing', () => {
+  const a = JSON.stringify(g.worldMsg(null)), b = '{"t":"world","scene":{"id":"b"}}';
+  assert.equal(g.worldDue(1, a, a), true);
+  assert.equal(g.worldDue(1, undefined, a), true);
+  assert.equal(g.worldDue(2, a, a), false);
+  assert.equal(g.worldDue(2, a, b), true);
+  assert.equal(g.worldDue(2, undefined, a), true); // never sent, or forgotten on away
+  assert.equal(g.worldDue(2, null, a), true);
+  for (const v of [0, 3, -1, '1']) assert.equal(g.worldDue(v, null, a), false, String(v));
+});
+
+test('pos due: on change, else once the keepalive has passed', () => {
+  assert.equal(g.posDue('a', 'a', 1000, 3999, 3000), false);
+  assert.equal(g.posDue('a', 'a', 1000, 4000, 3000), true);
+  assert.equal(g.posDue('a', 'b', 1000, 1200, 3000), true);
+  assert.equal(g.posDue(null, 'a', -Infinity, 0, 3000), true); // cleared on enter
+  assert.equal(g.posDue(undefined, 'a', undefined, 5, 3000), true); // never sent
+});
+
+test('pos payload: my figure, my near label, every other seated figure with its colour and name', () => {
+  const who = new Map([[0, { name: 'Keyboard', color: '#f3ecdc' }], [1, { name: 'Red Fox', color: '#c33', near: 'train' }], [2, { name: 'Blue Jay', color: '#33c', near: null }]]);
+  const figures = [{ pid: 0, t: 0.15, facing: 1 }, { pid: 1, t: 0.123456, facing: -1 }, { pid: 2, t: 0.5, facing: 1 }, { pid: 9, t: 0.7, facing: 1 }];
+  assert.deepEqual(g.posMsg(1, figures, who), {
+    t: 'pos', me: { t: 0.1235, facing: -1 }, near: 'train',
+    others: [{ pid: 0, t: 0.15, facing: 1, color: '#f3ecdc', name: 'Keyboard' }, { pid: 2, t: 0.5, facing: 1, color: '#33c', name: 'Blue Jay' }],
+  });
+  assert.equal(g.posMsg(2, figures, who).near, null);
+  assert.equal(g.posMsg(3, figures, who), null); // no figure
+  assert.equal(g.posMsg(9, figures, who), null); // a figure but no seat
+});

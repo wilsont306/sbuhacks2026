@@ -145,7 +145,8 @@ export function createSlots({ slots, max, holdMs, send, close, emit, store = nul
       lobbyCids.clear(); closing.clear(); // after a gap every live cid proves itself again by answering who
       for (const s of byToken.values()) if (s.cid) hold(s);
     },
-    to(pid, msg) { const s = byPid(pid); if (!s || !s.cid) return false; send(s.cid, msg); return true; },
+    // false when the host's own socket is down too, so callers never record a message as delivered that was dropped
+    to(pid, msg) { const s = byPid(pid); if (!s || !s.cid) return false; return send(s.cid, msg) !== false; },
     kick(pid, reason) { const s = byPid(pid); if (!s) return; kicked.set(s.token, reason); drop(s, reason); },
     setCap(n) { cap = Math.max(0, Math.min(max, n | 0)); lobbyAll(); },
     stats: () => ({ players: byCid.size, seats: byToken.size, joinsTotal, reconnects }),

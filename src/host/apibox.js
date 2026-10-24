@@ -1,7 +1,7 @@
 // The API plug-in box (K, or the API button in the right margin): a modal over the stage where a visitor plugs in
-// their own Gemini and ElevenLabs keys and tests every platform, through POST /api/check (the relay through its own
-// health GET). The keys live in src/shared/byok.js; once saved the page shows only mask(). main.js imports this after
-// glue.js. Every key pressed inside the box stops here, so typing never reaches the TV's letter keys.
+// their own Gemini, ElevenLabs and Tripo keys and tests every platform, through POST /api/check (the relay through its
+// own health GET). The keys live in src/shared/byok.js; once saved the page shows only mask(). main.js imports this
+// after glue.js. Every key pressed inside the box stops here, so typing never reaches the TV's letter keys.
 import * as byok from '../shared/byok.js';
 import './apibox.css';
 
@@ -10,7 +10,16 @@ const HOST_TOKEN = new URLSearchParams(location.search).get('host') || ''; // th
 const KEYED = [
   { id: 'gemini', name: 'Google Gemini', what: 'Reads each artwork. Your key skips our hourly cap.', hint: 'Paste a Gemini key' },
   { id: 'elevenlabs', name: 'ElevenLabs', what: 'Makes the sounds. Your key turns generation on.', hint: 'Paste an ElevenLabs key' },
+  {
+    id: 'tripo', name: 'Tripo', what: 'Builds 3D models of the main objects. Your key skips our hourly cap.', hint: 'Paste a Tripo key',
+    note: "About 30 credits per object. On Tripo's free plan Tripo owns the outputs.",
+  },
 ];
+// A key's shape before it is saved: Tripo's own check, else the shared one.
+const SHAPE = {
+  tripo: [byok.validTripoKey, "That isn't a Tripo key: tsk_ then 8 to 200 characters, no spaces"],
+  other: [byok.validKey, "That isn't a key: 20 to 200 letters, digits, . _ -"],
+};
 // Team-only services: the box can test them, never change them. The relay answers its own health GET.
 const TEAM = [{ id: 'snowflake', name: 'Snowflake' }, { id: 'storage', name: 'Blob storage' }, { id: 'relay', name: 'Realtime relay' }];
 const STATE_TEXT = { idle: 'Not tested', pending: 'Testing…', ok: 'Working', bad: 'Failed' };
@@ -86,10 +95,10 @@ function forget(c) {
 
 // Test with typed text saves it first (only if it has a key's shape), then checks; the field empties at once.
 function testKeyed(id) {
-  const c = ui[id], typed = c.input.value.trim();
+  const c = ui[id], typed = c.input.value.trim(), [valid, why] = SHAPE[id] || SHAPE.other;
   if (typed) {
-    if (!byok.validKey(typed)) {
-      set(id, { state: 'bad', detail: "That isn't a key: 20 to 200 letters, digits, . _ -", credits: null });
+    if (!valid(typed)) {
+      set(id, { state: 'bad', detail: why, credits: null });
       c.input.focus();
       return;
     }
@@ -126,7 +135,7 @@ function keyedCard(svc) {
     using: h('p', { class: 'api-using' }),
     saved: h('p', { id: `api-${id}-saved`, class: 'api-saved' }),
     detail: h('span', {}),
-    credits: id === 'elevenlabs' ? h('span', { class: 'api-credits' }) : null,
+    credits: id === 'elevenlabs' || id === 'tripo' ? h('span', { class: 'api-credits' }) : null,
     model: null,
   };
   c.input.addEventListener('input', () => { c.test.textContent = c.input.value.trim() ? 'Save and test' : 'Test'; });
@@ -151,6 +160,7 @@ function keyedCard(svc) {
     h('div', { class: 'api-head' }, h('h3', { id: `api-${id}-h`, text: svc.name }), st.el),
     c.using,
     h('p', { class: 'api-what', text: svc.what }),
+    svc.note ? h('p', { class: 'api-what', text: svc.note }) : null,
     h('div', { class: 'api-field' },
       h('label', { class: 'api-label', for: c.input.id, text: 'Your key' }),
       h('div', { class: 'api-keyrow' }, c.input, c.show),
@@ -196,7 +206,7 @@ function renderAll() {
   for (const id of Object.keys(ui)) renderCard(id);
   const keys = byok.load();
   if (remember) remember.checked = keys.remember;
-  if (openYours) openYours.hidden = !(keys.gemini || keys.elevenlabs);
+  if (openYours) openYours.hidden = !(keys.gemini || keys.elevenlabs || keys.tripo);
 }
 
 function focusables() {
@@ -219,7 +229,7 @@ export function open() {
   layer.hidden = false;
   openBtn.setAttribute('aria-expanded', 'true');
   ui.gemini.input.focus();
-  // One round of checks per page load (4 of the server's 10 per minute); after that, Test asks again.
+  // One round of checks per page load (5 of the server's 10 per minute); after that, Test asks again.
   if (!checked) { checked = true; for (const id of Object.keys(ui)) test(id); }
 }
 

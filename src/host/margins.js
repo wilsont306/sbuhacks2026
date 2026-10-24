@@ -54,17 +54,21 @@ export function labelOf(scene) {
   };
 }
 
-// One live line per platform for the 'network' layer. hub: the relay's {t:'hub'} message; audio: audio.stats().
-export function platformLines({ hub, scene, saved, id, audio } = {}) {
+// One live line per platform for the 'network' layer. hub: the relay's {t:'hub'} message; audio: audio.stats();
+// depth: enrich.stats(); models: models3d.stats(), 'off' when D turned them off or the server has no Tripo key.
+export function platformLines({ hub, scene, saved, id, audio, depth, models } = {}) {
   const h = hub && typeof hub === 'object' ? hub : null;
   const where = h && (h.region === 'local' ? 'laptop relay (Q)' : `relay ${str(h.region, 20) || 'vercel'}`);
   const a = audio && typeof audio === 'object' ? audio : {};
+  const d = depth && typeof depth === 'object' ? depth : {}, t = models && typeof models === 'object' ? models : {};
   return [
     { name: 'Vercel', text: h ? `${where} · instance ${str(h.instance, 8) || '—'} · bus ${h.bus === 'redis' ? 'Upstash Redis' : 'local'}` : 'relay not connected' },
     { name: 'Gemini', text: !scene ? 'no reading on screen' : scene.edited === true ? 'sample, edited (hand-corrected)'
       : `${str(scene.model, 40) || 'unknown model'} · read at ${clock(scene.generated_at)}` },
     { name: 'ElevenLabs', text: `played ${count(a.played)} · generated ${count(a.generated)} · cached ${count(a.cached)}` },
     { name: 'Snowflake', text: `project ${str(id, 48) || '—'} · ${savedText(saved)}` },
+    { name: 'Depth Anything V2', text: `${str(d.device, 20) || '—'} · ${str(d.state, 20) || 'idle'} · ${count(d.ms)} ms` },
+    { name: 'Tripo', text: t.on !== true || t.last === 'off' ? 'off' : `${count(t.ready)} ready · ${count(t.running)} running` },
   ];
 }
 
@@ -80,11 +84,13 @@ const FLASH_MS = 2000, PLATFORM_TICK_MS = 1000;
 
 const h = (tag, cls, ...kids) => { const el = document.createElement(tag); if (cls) el.className = cls; el.append(...kids); return el; };
 
-let els = null, scene = null, saved = 'unsaved', projectId = '', hub = null, audioStats = () => ({});
+let els = null, scene = null, saved = 'unsaved', projectId = '', hub = null, audioStats = () => ({}), depthStats = () => ({}), modelStats = () => ({});
 let flashT = 0, platformT = 0;
 
 export function init(opts = {}) {
   if (typeof opts.audioStats === 'function') audioStats = opts.audioStats;
+  if (typeof opts.depthStats === 'function') depthStats = opts.depthStats;
+  if (typeof opts.modelStats === 'function') modelStats = opts.modelStats;
   if (els) return;
   const tv = document.getElementById('tv'), stage = document.getElementById('stage');
   const left = document.querySelector('#tv .margin.left'), right = document.querySelector('#tv .margin.right');
@@ -107,7 +113,7 @@ export function init(opts = {}) {
 
   const platformList = h('dl', '');
   const platforms = h('section', '', platformList); platforms.id = 'platforms'; platforms.hidden = true;
-  platforms.setAttribute('aria-label', 'The four platforms, live');
+  platforms.setAttribute('aria-label', 'The platforms, live');
   const learn = h('section', ''); learn.id = 'learning'; learn.hidden = true; learn.setAttribute('aria-label', 'Learning');
   stage.append(platforms, learn);
 
@@ -148,7 +154,7 @@ export function showPlatforms(on) {
   if (!els) return;
   els.platforms.hidden = !on;
   clearInterval(platformT);
-  if (on) platformT = setInterval(renderPlatforms, PLATFORM_TICK_MS); // ElevenLabs counts move while it is open
+  if (on) platformT = setInterval(renderPlatforms, PLATFORM_TICK_MS); // the ElevenLabs, depth and Tripo lines move while it is open
   renderPlatforms();
 }
 
@@ -197,9 +203,9 @@ function renderScene() {
 
 function renderPlatforms() {
   if (!els || els.platforms.hidden) return;
-  let audio = {};
-  try { audio = audioStats() || {}; } catch { /* the audio module's own failure must not blank the panel */ }
-  els.platformList.replaceChildren(...platformLines({ hub, scene, saved, id: projectId, audio })
+  // another module's own failure must not blank the panel
+  const read = (fn) => { try { return fn() || {}; } catch { return {}; } };
+  els.platformList.replaceChildren(...platformLines({ hub, scene, saved, id: projectId, audio: read(audioStats), depth: read(depthStats), models: read(modelStats) })
     .map((l) => h('div', 'row', h('dt', '', l.name), h('dd', '', l.text))));
 }
 

@@ -1,15 +1,17 @@
-// Vercel Function: POST /api/check {service: 'gemini'|'elevenlabs'|'snowflake'|'storage'} -> 200 {ok, using, detail,
-// credits?}, the TV's "test this key" button. gemini and elevenlabs test the visitor's own key from x-gemini-key /
-// x-elevenlabs-key (using:'yours'), else the team's env key (using:'team'), else answer using:'none'; neither costs
-// generation quota (Gemini lists models, ElevenLabs reads the subscription, or its models list for a key not allowed to
-// read it, and then credits is null). snowflake and storage are the team's only. Each upstream call is cut at 8 s,
-// each client gets 10 checks a minute (429), anything but POST is 405, an unknown service 400. detail is short, fixed
-// text safe to show on the TV: no key and no upstream body ever comes back or reaches the log.
+// Vercel Function: POST /api/check {service: 'gemini'|'elevenlabs'|'tripo'|'snowflake'|'storage'} -> 200 {ok, using,
+// detail, credits?}, the TV's "test this key" button. gemini, elevenlabs and tripo test the visitor's own key from
+// x-gemini-key / x-elevenlabs-key / x-tripo-key (using:'yours'), else the team's env key (using:'team'), else answer
+// using:'none'; none costs generation quota (Gemini lists models, ElevenLabs reads the subscription, or its models list
+// for a key not allowed to read it, and then credits is null; Tripo reads the balance). snowflake and storage are the
+// team's only. Each upstream call is cut at 8 s, each client gets 10 checks a minute (429), anything but POST is 405, an
+// unknown service 400. detail is short, fixed text safe to show on the TV: no key and no upstream body ever comes back
+// or reaches the log.
 import { readBody, clientIp, userKey } from './interpret.js';
 import { tokenMatches } from './sfx.js';
+import { TRIPO_BASE, tripoKey } from '../lib/tripo.js';
 
 export const TIMEOUT_MS = 8000, MAX_PER_MINUTE = 10, MINUTE_MS = 60 * 1000;
-export const SERVICES = ['gemini', 'elevenlabs', 'snowflake', 'storage'];
+export const SERVICES = ['gemini', 'elevenlabs', 'tripo', 'snowflake', 'storage'];
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1';
 const ELEVEN_URL = 'https://api.elevenlabs.io/v1';
 const TIMED_OUT = { status: 0, why: 'timeout' };
@@ -94,14 +96,23 @@ export function createHandler(deps = {}) {
       : { ok: false, credits: null, detail: trouble('ElevenLabs', m) };
   }
 
+  async function tripo(key) {
+    const r = await get(`${TRIPO_BASE}/account/balance`, { Authorization: `Bearer ${key}` });
+    if (r.status !== 200 || r.json?.code !== 0) return { ok: false, credits: null, detail: r.status === 200 ? 'Tripo answered with an error' : trouble('Tripo', r) };
+    const credits = parseFloat(r.json.data?.balance); // a float, maybe sent as a string
+    return Number.isFinite(credits)
+      ? { ok: true, credits, detail: `Tripo accepted the key; ${credits} credits left` }
+      : { ok: true, credits: null, detail: 'Tripo accepted the key' };
+  }
+
   // A provider check: the visitor's key, else the team's, else none.
   // The team's setup (its keys, credits, Snowflake, Blob) is told only to the TV, which sends HOST_TOKEN; a visitor's
   // own key can be tested by anyone.
   const isHost = (req) => !env.HOST_TOKEN || tokenMatches(req.headers?.['x-host-token'], env.HOST_TOKEN);
   const TV_ONLY = { ok: false, using: 'none', detail: 'Team checks run from the TV only' };
 
-  async function provider(req, header, teamKey, name, test) {
-    const key = userKey(req, header);
+  async function provider(req, header, teamKey, name, test, read = userKey) {
+    const key = read(req, header);
     if (key === null) return { ok: false, using: 'yours', detail: `That does not look like a ${name} key` };
     if (!key && !isHost(req)) return TV_ONLY;
     const team = String(teamKey ?? '').trim();
@@ -111,6 +122,7 @@ export function createHandler(deps = {}) {
 
   async function check(service, req) {
     if (service === 'gemini') return provider(req, 'x-gemini-key', env.GEMINI_API_KEY, 'Gemini', gemini);
+    if (service === 'tripo') return provider(req, 'x-tripo-key', env.TRIPO_API_KEY, 'Tripo', tripo, tripoKey);
     if (service === 'elevenlabs') {
       const out = await provider(req, 'x-elevenlabs-key', env.ELEVENLABS_API_KEY, 'ElevenLabs', elevenlabs);
       if (out.using === 'team' && out.ok && env.SOUND_GEN !== 'on') out.detail += '; sound generation is off on this server';

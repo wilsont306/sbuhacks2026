@@ -1,6 +1,8 @@
-// Host glue: the relay socket, the seats (src/host/slots.js), the player manager, the phones' panel kinds ('original'
-// and 'artwork'; decided here and only here, the host never trusts a phone), the scene's hotspot events (near, poke,
-// layer) relayed to phones, audio and margins, the right margin (#roster, #hud, #qr, #resting) and the operator keys
+// Host glue: the relay socket, the seats (src/host/slots.js), the player manager, the phones' panel kinds ('original',
+// 'artwork', 'inside', and 'look', which is activity only: panel() stamps lastActive for every kind; decided here and
+// only here, the host never trusts a phone), the scene's hotspot events (near,
+// poke, layer, scene) relayed to phones, audio and margins, the inside phones' world and pos (on change, else every 3 s), the right margin
+// (#roster, #hud, #qr, #resting) and the operator keys
 // H, J, R, Q. It inits audio.js, margins.js and artwork.js. main.js imports scene.js first, so window.game already exists.
 import qrcode from 'qrcode-generator';
 import SLOTS from '../shared/slots.json';
@@ -8,6 +10,8 @@ import { createSlots } from './slots.js';
 import * as audio from './audio.js';
 import * as margins from './margins.js';
 import * as artwork from './artwork.js';
+import * as enrich from './enrich.js';
+import * as models from './models3d.js';
 import {
   MAX_PLAYERS, HB_MS, INPUT_STALE_MS, ORIGINAL_COOLDOWN_MS, ORIGINAL_MS, ARTWORK_COOLDOWN_MS, CLOSE_HOST_REPLACED, CLOSE_BAD_HOST_TOKEN, hubUrl,
   PLAYER_IDLE_MS, JUDGE_IDLE_MS, JUDGE_RESERVE,
@@ -55,6 +59,34 @@ export function median(xs) {
 // Integer px per module (6, else 5, else 4) so the modules plus a 4-module quiet zone fit in `max` px.
 export const qrScale = (modules, max = 222) =>
   [6, 5, 4].find((px) => (modules + 8) * px <= max) || Math.max(1, Math.floor(max / (modules + 8)));
+
+// The inside view's world: the scene inline with an image the phone can load (http(s) or site-relative; never data:,
+// blob: or protocol-relative), and only while its JSON is at most 48000 characters. Else nothing to step into.
+const worldImage = (u) => typeof u === 'string' && /^(https?:\/\/|\/(?![/\\]))/i.test(u);
+export function worldMsg(scene) {
+  const image = scene ? scene.image_url : null;
+  return scene && worldImage(image) && JSON.stringify(scene).length <= 48000
+    ? { t: 'world', scene, image } : { t: 'world', scene: null, reason: 'This picture can’t be entered yet' };
+}
+
+// panel inside: 1 always answers with the world; 2 (a re-assert from a view that already shows one) only when the
+// world's JSON differs from the last one sent to that phone; anything else is leaving.
+export const worldDue = (value, sentJson, json) => value === 1 || (value === 2 && sentJson !== json);
+
+// A phone's pos goes out when it changed, or as a keepalive (each 'to' across Vercel instances is a Redis PUBLISH).
+export const posDue = (prevJson, json, lastAt, now, keepaliveMs) => json !== prevJson || now - lastAt >= keepaliveMs;
+
+// One inside phone's pos: its own figure, the label it stands at, and every other seated figure (`who`: pid ->
+// {name, color, near}). null when that phone has no figure or no seat.
+export function posMsg(pid, figures, who) {
+  const r = (t) => Math.round(t * 1e4) / 1e4, me = figures.find((f) => f.pid === pid), p = who.get(pid);
+  if (!me || !p) return null;
+  return {
+    t: 'pos', me: { t: r(me.t), facing: me.facing }, near: p.near ?? null,
+    others: figures.filter((f) => f.pid !== pid && who.has(f.pid))
+      .map((f) => ({ pid: f.pid, t: r(f.t), facing: f.facing, color: who.get(f.pid).color, name: who.get(f.pid).name })),
+  };
+}
 /* pure:end */
 
 const game = window.game;
@@ -66,16 +98,21 @@ const ROLL = Number(query.get('roll')) || 0; // ?roll=<ms> shortens the socket r
 const els = Object.fromEntries(['roster', 'hud', 'qr', 'resting'].map((id) => [id, document.getElementById(id)]));
 
 const KICK_LIMITS = { idle: PLAYER_IDLE_MS, judgeIdle: JUDGE_IDLE_MS };
+const POS_KEEPALIVE_MS = 3000; // an unchanged pos is re-sent this often
 
-// phone pid -> {name, color, joinedAt, lastInput, lastActive, moving, away, rtts, kicked, guest, preJ, near, lastArtwork}
+// phone pid -> {name, color, joinedAt, lastInput, lastActive, moving, away, rtts, kicked, guest, preJ, near, lastArtwork,
+// inside, worldSent (JSON of the last world told to it), lastPos (JSON of the last pos), lastPosAt}
 const players = new Map();
 let ws = null, open = false, hubSeen = false, closedAt = performance.now(), stopped = '', backoff = 500, retry = 0, rollT = 0, rollWait = 0;
 let fallback = false, hub = null, joinUrl = '', judge = false, hudOpen = false, lastOriginal = -Infinity;
 
 // margins and audio only keep each other's references at init, so the order only matters for artwork, which may use both at once.
-margins.init({ audioStats: audio.stats });
+margins.init({ audioStats: audio.stats, depthStats: enrich.stats, modelStats: models.stats });
 audio.init({ token, margins });
+models.init({ game, token, margins });
+enrich.onScene(models.onScene); // before artwork.init, whose sample 1 is the first scene
 artwork.init({ game, token, audio, margins });
+enrich.init({ game, token, margins }); // depth (and, through onScene, 3D models) for each scene once it is on stage
 
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
 const storage = (key) => { try { const ls = window.localStorage; return { get: () => ls.getItem(key), set: (v) => ls.setItem(key, v) }; } catch { return null; } };
@@ -158,6 +195,7 @@ function lost() {
   for (const [pid, p] of players) {
     game.setInput(pid, 0, 0); // no more input can arrive; never let a figure walk on
     p.away = true; // the roster greys them and J kicks them first if the hub never returns
+    p.worldSent = null; // a world written into the dying socket may never have arrived; the post-gap inside 2 resends it
   }
 }
 
@@ -194,7 +232,8 @@ function onHub(m) {
       p.moving = !!(lx || a);
       if (p.moving) p.lastInput = p.lastActive = now;
     } break;
-    case 'away': if (p) p.away = true; break;
+    // A phone back from away says 'inside' again; what reached it before its socket died is unknown, so forget the world.
+    case 'away': if (p) { p.away = true; p.inside = false; p.worldSent = null; } break;
     case 'back':
       if (p) p.away = false;
       resync(pid);
@@ -224,6 +263,15 @@ const readout = (pid, text) => tell(pid, { t: 'readout', text });
 function panel(pid, kind, value) {
   const p = players.get(pid), now = performance.now();
   p.lastActive = now;
+  if (kind === 'inside') {
+    // shortcut: no per-phone throttle on the world reply; the relay's 20 messages a second per phone bounds a repeater.
+    p.inside = value === 1 || value === 2;
+    if (!p.inside) return;
+    p.lastPos = null; p.lastPosAt = -Infinity; // the first pos goes out on the next tick
+    const msg = worldMsg(game.scene()), json = JSON.stringify(msg);
+    if (worldDue(value, p.worldSent, json) && tell(pid, msg)) p.worldSent = json;
+    return;
+  }
   if (kind === 'original') {
     const wait = originalWait(lastOriginal, now, ORIGINAL_COOLDOWN_MS);
     if (wait) return readout(pid, `Show the original again in ${Math.ceil(wait / 1000)} s`);
@@ -251,7 +299,24 @@ game.onHotspot((e) => {
     audio.play('poke', { label, kind: e.kind, sound_prompt: e.sound_prompt });
     readout(e.pid, 'You poked the ' + (label || 'object'));
   } else if (e?.type === 'layer') margins.showPlatforms(e.name === 'network');
+  else if (e?.type === 'scene' || e?.type === 'enriched') { // enriched: a depth_url or model_url landed on this scene
+    const msg = worldMsg(game.scene()), json = JSON.stringify(msg);
+    for (const [pid, p] of players) if (p.inside && tell(pid, msg)) p.worldSent = json;
+  }
 });
+
+// Checked at about 5 Hz: where every figure stands, to each inside phone whose pos changed (else every
+// POS_KEEPALIVE_MS). pid 0 is the TV's keyboard figure.
+setInterval(() => {
+  const inside = [...players].filter(([, p]) => p.inside);
+  if (!inside.length || !open) return;
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--slot-keyboard').trim();
+  const figures = game.positions(), who = new Map(players).set(0, { name: 'Keyboard', color }), now = performance.now();
+  for (const [pid, p] of inside) {
+    const m = posMsg(pid, figures, who), json = m && JSON.stringify(m);
+    if (m && posDue(p.lastPos, json, p.lastPosAt, now, POS_KEEPALIVE_MS) && tell(pid, m)) { p.lastPos = json; p.lastPosAt = now; }
+  }
+}, 200);
 
 // ---- operator keys ----
 // The cap stays MAX_PLAYERS: a lower cap would also refuse the judge. Phones on the bank now are preJ; later joins are guests.
@@ -338,14 +403,16 @@ function render() {
     ...[...players.values()].map((p) => row(p.color, p.name, p.away))));
 
   const where = !hub ? '—' : hub.region === 'local' ? 'local' : `vercel ${hub.region}${hub.bus === 'redis' ? '' : ' · no redis'}`;
-  const hud = [h('div', 'line', dot('', open && hubSeen ? 'ok' : 'bad'), `${where} · players ${players.size}/${MAX_PLAYERS}`)];
+  const inside = [...players.values()].filter((p) => p.inside).length;
+  const hud = [h('div', 'line', dot('', open && hubSeen ? 'ok' : 'bad'), `${where} · players ${players.size}/${MAX_PLAYERS} · inside ${inside}`)];
   if (hudOpen) {
-    const s = { uptime: performance.now() / 1000, ...seats.stats() }, st = game.stats() || {}, cur = artwork.current() || {};
+    const s = { uptime: performance.now() / 1000, ...seats.stats() }, st = game.stats() || {}, cur = artwork.current() || {}, dp = enrich.stats();
     hud.push(h('div', 'more', ...[
       `join ${joinUrl || '—'}`,
       `up ${dur(s.uptime)} · joins ${s.joinsTotal ?? '—'} · reconnects ${s.reconnects ?? '—'}`,
       `fps ${Number.isFinite(st.fps) ? Math.round(st.fps) : '—'}`,
       `layer ${st.layer || '—'} · ${cur.saved || '—'}${cur.id ? ' ' + cur.id : ''}`,
+      `depth ${dp.state}${dp.device ? ' · ' + dp.device : ''}${dp.ms ? ' · ' + dp.ms + ' ms' : ''}`,
       // One short line per phone: guests are exempt from idle releases, so they show 'guest' in place of the idle clock.
       ...[...players.values()].map((p) => `${p.name.split(' ')[0]} rtt ${p.rtts.length ? Math.round(median(p.rtts)) + 'ms' : '—'} `
         + (judge && p.guest ? 'guest' : `idle ${Math.floor((performance.now() - p.lastActive) / 1000)}s`)),

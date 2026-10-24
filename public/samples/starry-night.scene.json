@@ -5,6 +5,7 @@
  "credit": "Vincent van Gogh, 1889. The Museum of Modern Art, New York. Public domain (Wikimedia Commons).",
  "image_url": "/samples/starry-night.jpg",
  "scene_url": "",
+ "depth_url": "/samples/starry-night.depth.png",
  "model": "hand-corrected",
  "generated_at": "2026-10-24T09:00:00.000Z",
  "ai_draft": true,
