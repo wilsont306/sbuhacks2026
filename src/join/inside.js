@@ -4,6 +4,7 @@
 // painting camera), then glides down into the figure's eyes. No ES2020 syntax (?. ??): iOS 13 must parse it.
 import * as THREE from 'three';
 import { buildDiorama } from '../world/diorama.js';
+import { walkSign } from '../world/tip.js';
 import { sheetTexture, setFrame, textSprite, shadowTexture, ASPECT, WALK, IDLE } from '../host/figures.js';
 import { MIN_T } from '../shared/protocol.js';
 import './inside.css';
@@ -17,6 +18,7 @@ const FIG_H = 1.08, LANE = 0.35; // other figures: height and side step off the 
 const TAG_H = 0.09; // name tags keep one size on screen (about 4% of its height), near or far
 const WALK_RATE = 80; // walk frames per path length: the TV's 8 a second at 0.10 path lengths a second
 const LOOK_MS = 20000, LOOK_TURN = 5 * Math.PI / 180; // looking around counts as activity: one 'look' per 20 s at most
+const FLIP_DEG = 15; // Walk switches path direction only once the look is this far past sideways
 const UNTIL = 'This view opens by itself when the TV shows a picture you can enter.';
 const BACK_HINT = 'Go back to the pad, or wait here for the next picture.';
 const BUILDING = 'Building the world…', ASKING = 'Asking the screen for the picture.';
@@ -108,12 +110,14 @@ const HTML = `<canvas class="in-gl" aria-hidden="true"></canvas>
   <button type="button" class="in-round in-walk" aria-label="Hold to walk forward">${FORWARD}</button>
   <button type="button" class="verb in-verb" aria-disabled="true">Walk to something</button>
   <button type="button" class="in-round in-turn" aria-label="Turn around">${U_TURN}</button>
-</div>`;
+</div>
+<div class="desc in-desc" role="status" hidden><div class="desc-head"><h2></h2><button type="button" class="desc-x">Close</button></div><p></p></div>`;
 
 // ctx: {setLx(v), setA(v)} (the pad's own input, so the heartbeat and release rules are the pad's), ask() (sends
 // {t:'panel', kind:'inside', value:1}), reassert() (value 2: the host resends the world only if it changed), look()
 // (sends {t:'panel', kind:'look', value:1}, activity for the idle kick; returns whether it went), back() (main leaves:
-// sends value 0 and calls close), toast(text). Returns {msg(m), input(lx, a), again(), close()}.
+// sends value 0 and calls close), toast(text), closeDesc() (the description card's Close: main closes it everywhere).
+// Returns {msg(m), input(lx, a), again(), describe(d), close()}; d is {head, text}, or null to hide the card.
 export function open(ctx) {
   const root = document.createElement('section');
   root.className = 'inside';
@@ -123,7 +127,7 @@ export function open(ctx) {
   document.body.classList.add('inside');
   const q = (s) => root.querySelector(s);
   const canvas = q('.in-gl'), card = q('.in-card'), verb = q('.in-verb'), tiltBtn = q('.in-tilt'), hint = q('.in-hint');
-  const walkBtn = q('.in-walk'), turnBtn = q('.in-turn');
+  const walkBtn = q('.in-walk'), turnBtn = q('.in-turn'), descEl = q('.in-desc');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 
   let closed = false, raf = 0, last = 0, seq = 0, worldKey = '', world = null, asks = 0, askT = 0, tiltT = 0, hintT = 0;
@@ -250,7 +254,7 @@ export function open(ctx) {
   // ---- positions: mine drives the camera, the others are paper figures in their colours ----
   function setNear(label) {
     const on = typeof label === 'string' && label !== '';
-    const text = on ? 'Poke the ' + label.slice(0, 40) : 'Walk to something';
+    const text = on ? 'About the ' + label.slice(0, 40) : 'Walk to something';
     if (verb.textContent !== text) verb.textContent = text;
     verb.setAttribute('aria-disabled', on ? 'false' : 'true');
   }
@@ -299,8 +303,13 @@ export function open(ctx) {
 
   // ---- the frame ----
   const eye = new THREE.Vector3(), fwd = new THREE.Vector3(), at = new THREE.Vector3(), right = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
-  const look = new THREE.Quaternion(), qz = new THREE.Quaternion(), euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const look = new THREE.Quaternion(), qz = new THREE.Quaternion(), euler = new THREE.Euler(0, 0, 0, 'YXZ'), ahead = new THREE.Vector3();
   const BACK_OF_PHONE = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // the camera looks out of the phone's back
+  // The look for a base yaw along the path: plus the drag, and the phone's own turn while tilt is on.
+  function aimLook(qOut, base) {
+    if (tilt && tilt.q) return qOut.setFromAxisAngle(Y, base + dragYaw - tilt.yaw0).multiply(tilt.q);
+    return qOut.setFromEuler(euler.set(pitch, base + dragYaw, 0, 'YXZ'));
+  }
   function frame(now) {
     raf = requestAnimationFrame(frame);
     const dt = clamp((now - last) / 1000, 0, 0.1);
@@ -309,11 +318,22 @@ export function open(ctx) {
     const d = world.d, k = 1 - Math.exp(-dt * 8);
     d.update(dt, reduced.matches);
     me.shown += (me.t - me.shown) * k; // positions come 5 times a second; ease between them
-    const hd = dir(), p = d.pathAt(me.shown), f0 = xyz(p.forward, fwd), aim = Math.atan2(-f0.x * hd, -f0.z * hd);
+    const p = d.pathAt(me.shown), f0 = xyz(p.forward, fwd);
+    let aim = Math.atan2(-f0.x * dir(), -f0.z * dir());
+    // Walk goes the path way nearer the look: the full look at the path aim (not the eased yaw, so a turn's swing never
+    // flips it back). A flip re-expresses the drag (and the eased yaw) against the new aim: the view does not move.
+    if (heading !== null) {
+      ahead.set(0, 0, -1).applyQuaternion(aimLook(look, aim));
+      const s = walkSign(ahead.x, ahead.z, f0.x, f0.z, heading, FLIP_DEG);
+      if (s !== heading) {
+        heading = s; aim += Math.PI; dragYaw = wrap(dragYaw + Math.PI); endShown = false;
+        if (yaw !== null) yaw += Math.PI;
+        if (curLx !== 0) ctx.setLx(heading); // Walk held: keep walking, now the way you look
+      }
+    }
     yaw = yaw === null ? aim : yaw + wrap(aim - yaw) * (1 - Math.exp(-dt * 5)); // turning round is a turn, not a cut
     xyz(p.position, eye).y += d.eyeHeight;
-    if (tilt && tilt.q) look.setFromAxisAngle(Y, yaw + dragYaw - tilt.yaw0).multiply(tilt.q);
-    else look.setFromEuler(euler.set(pitch, yaw + dragYaw, 0, 'YXZ'));
+    aimLook(look, yaw);
     const g = reduced.matches ? 1 : smooth(((now - born) / 1000 - HOLD_S) / GLIDE_S);
     let fov = fpFov;
     if (g < 1) {
@@ -431,6 +451,7 @@ export function open(ctx) {
 
   q('.in-back').onclick = ctx.back;
   q('.in-out').onclick = ctx.back;
+  q('.desc-x').onclick = ctx.closeDesc;
   // Keys: ArrowUp held walks, ArrowDown or T turns around, Escape goes back.
   function onKey(e) {
     if (e.key === 'Escape') return ctx.back();
@@ -480,6 +501,12 @@ export function open(ctx) {
     again() {
       if (closed || !renderer) return;
       if (worldKey) ctx.reassert(); else askAgain();
+    },
+    // The verb's answer over the view (main owns when it opens and closes).
+    describe(d) {
+      if (closed) return;
+      descEl.hidden = !d;
+      if (d) { descEl.querySelector('h2').textContent = d.head; descEl.querySelector('p').textContent = d.text; }
     },
     close,
   };

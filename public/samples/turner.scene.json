@@ -51,7 +51,8 @@
    "depth": 0.22,
    "colour": "#3a2a22",
    "motion": "drift",
-   "sound_prompt": "Steam locomotive chuffing hard across a viaduct, whistle in the rain"
+   "sound_prompt": "Steam locomotive chuffing hard across a viaduct, whistle in the rain",
+   "description": "A Great Western Railway engine rushing toward us out of the rain. Its dark funnel and the red glow at its front are the sharpest marks in a painting where almost everything else dissolves."
   },
   {
    "label": "Hare on the track",
@@ -68,7 +69,8 @@
    "depth": 0.2,
    "colour": "#5a4632",
    "motion": "bob",
-   "sound_prompt": "A hare darting across wet gravel, quick soft footfalls"
+   "sound_prompt": "A hare darting across wet gravel, quick soft footfalls",
+   "description": "A hare running along the track ahead of the train, nature's speed against the machine's. Turner brushed it on thinly at the end, and the paint has grown so clear with age that it is now hard to see."
   },
   {
    "label": "Rowing boat",
@@ -85,7 +87,8 @@
    "depth": 0.12,
    "colour": "#6b5a3a",
    "motion": "bob",
-   "sound_prompt": "Oars dipping gently into a calm river, wooden boat creaking"
+   "sound_prompt": "Oars dipping gently into a calm river, wooden boat creaking",
+   "description": "A small boat with people in it, out on the river at the lower left. It is only a few quick touches of paint, a slow, quiet counterpoint to the speeding train."
   },
   {
    "label": "Railway viaduct",
@@ -109,7 +112,8 @@
    "depth": 0.3,
    "colour": "#7a4a2a",
    "motion": "none",
-   "sound_prompt": "Train wheels rumbling over a brick viaduct, deep echoing clatter"
+   "sound_prompt": "Train wheels rumbling over a brick viaduct, deep echoing clatter",
+   "description": "Brunel's railway bridge at Maidenhead, carrying the line over the Thames. Its brown brick edge cuts in from the corner and races to the horizon, a steep perspective that makes the train feel fast."
   },
   {
    "label": "River Thames",
@@ -128,7 +132,8 @@
    "depth": 0.15,
    "colour": "#d8cfa8",
    "motion": "sway",
-   "sound_prompt": "Rain falling steadily on a wide calm river"
+   "sound_prompt": "Rain falling steadily on a wide calm river",
+   "description": "The River Thames, crossed by both bridges. It is laid in thin, pale washes of cream and grey, so the water, the mist and the rain seem to melt together."
   },
   {
    "label": "Old road bridge",
@@ -145,7 +150,8 @@
    "depth": 0.6,
    "colour": "#cdb88a",
    "motion": "none",
-   "sound_prompt": "A distant horse and cart crossing an old stone bridge"
+   "sound_prompt": "A distant horse and cart crossing an old stone bridge",
+   "description": "The older stone road bridge at Maidenhead, built in the 1770s. Its pale arches and their reflections are only softly suggested, a calm contrast with the new railway."
   },
   {
    "label": "Steam and smoke",
@@ -168,7 +174,8 @@
    "depth": 0.26,
    "colour": "#8a8070",
    "motion": "drift",
-   "sound_prompt": "Hissing steam bursting from a locomotive chimney, soft whoosh"
+   "sound_prompt": "Hissing steam bursting from a locomotive chimney, soft whoosh",
+   "description": "Puffs of white steam from the engine blurring into the rain and mist. Turner keeps them small and soft, so it is hard to tell where the machine ends and the weather begins."
   },
   {
    "label": "Rain-swept sky",
@@ -189,7 +196,8 @@
    "depth": 1,
    "colour": "#c9c6b0",
    "motion": "drift",
-   "sound_prompt": "Heavy rain and gusting wind sweeping across open countryside"
+   "sound_prompt": "Heavy rain and gusting wind sweeping across open countryside",
+   "description": "A sky full of driving rain over the Thames valley. In the centre and upper right the paint is laid on thickly, partly with a palette knife, and patches of blue break through the yellow and grey."
   }
  ]
 }

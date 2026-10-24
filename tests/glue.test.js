@@ -164,3 +164,12 @@ test('pos payload: my figure, my near label, every other seated figure with its 
   assert.equal(g.posMsg(3, figures, who), null); // no figure
   assert.equal(g.posMsg(9, figures, who), null); // a figure but no seat
 });
+
+test('describe: the label and the description, cleaned and capped, else the plain line', () => {
+  assert.deepEqual(g.describeMsg('river', '  A calm   river,\n painted thin. '), { t: 'describe', label: 'river', text: 'A calm river, painted thin.' });
+  for (const none of [undefined, null, '', '   \n', 42]) {
+    assert.deepEqual(g.describeMsg('moon', none), { t: 'describe', label: 'moon', text: 'No description for this one yet.' }, String(none));
+  }
+  assert.equal(g.describeMsg('sky', 'x'.repeat(300)).text.length, 240);
+  assert.equal(g.describeMsg(undefined, 'Two trees.').label, null);
+});

@@ -1,6 +1,9 @@
-// src/host/gallery.js: the mirror, the gallery merge, the save poll verdict, the failure messages, shelf moves and peeks.
+// src/host/gallery.js: the mirror, the gallery merge, the save poll verdict, the failure messages, shelf moves and peeks;
+// and src/host/artwork.js's sidebar hit test.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { validateScene } from '../src/shared/scene-validate.js';
 import {
   readMirror, trimMirror, mirrorItem, mergeGallery, pollVerdict, reasonMessage, isToday, safeUrl, isSceneUrl,
   moveShelf, peekLayers, MIRROR_CAP, MIRROR_SCENE_MAX, GALLERY_CARDS, POLL_AT, PEEK_Z,
@@ -149,4 +152,35 @@ test('peekLayers lifts objects far first along their masks and leaves the recedi
   assert.equal(layers[1].motion, 'bob');
   assert.deepEqual(peekLayers(null), []);
   assert.deepEqual(peekLayers({ objects: 'x' }), []);
+});
+
+// src/host/artwork.js imports CSS and touches the DOM, so only its pure block is loaded, as tests/glue.test.js does.
+const artSrc = readFileSync(new URL('../src/host/artwork.js', import.meta.url), 'utf8');
+const art = await import('data:text/javascript,' + encodeURIComponent(artSrc.slice(artSrc.indexOf('/* pure:start'), artSrc.indexOf('/* pure:end */'))));
+
+test('partAt names the smallest outline under the point, so a part inside a bigger one stays reachable', () => {
+  const sky = { points: [[0, 0], [1000, 0], [1000, 500], [0, 500]] };
+  const star = { points: [[400, 100], [420, 100], [420, 120], [400, 120]] };
+  const tri = { points: [[0, 600], [200, 600], [100, 900]] };
+  const flat = { points: [[0, 0], [500, 500], [1000, 1000]] };
+  assert.equal(art.partAt([sky, star], 410, 110), 1, 'the star, though the sky comes first');
+  assert.equal(art.partAt([star, sky], 410, 110), 0);
+  assert.equal(art.partAt([sky, star], 600, 300), 0);
+  assert.equal(art.partAt([sky, star, tri], 100, 700), 2);
+  assert.equal(art.partAt([sky, star, tri], 190, 880), -1, 'outside the triangle');
+  assert.equal(art.partAt([sky, star], 500, 800), -1);
+  assert.equal(art.partAt([flat], 500, 500), -1, 'a zero-area outline holds nothing');
+  assert.equal(art.partAt([], 1, 1), -1);
+});
+
+test('the sidebar can point at every object of the three samples', () => {
+  for (const name of ['turner', 'sketch', 'starry-night']) {
+    const raw = JSON.parse(readFileSync(new URL(`../public/samples/${name}.scene.json`, import.meta.url), 'utf8'));
+    const objects = validateScene(raw, raw).objects;
+    // The sidebar's geometry: each object's mask, else its box (peekLayers keeps the same points for the parts it cuts out).
+    const parts = objects.map((o) => ({ points: o.mask || [[o.box[0], o.box[1]], [o.box[2], o.box[1]], [o.box[2], o.box[3]], [o.box[0], o.box[3]]] }));
+    const reach = objects.map(() => 0);
+    for (let x = 1; x < 1000; x += 3) for (let y = 1; y < 1000; y += 3) { const i = art.partAt(parts, x, y); if (i >= 0) reach[i]++; }
+    objects.forEach((o, i) => assert.ok(reach[i] > 0, `${name}: ${o.label}`));
+  }
 });

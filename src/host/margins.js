@@ -212,7 +212,8 @@ export function showDescription(label, text, index) {
   clearTimeout(describeT);
   for (const li of stops) li.querySelector('.say')?.remove();
   if (!stop || !c.text) return;
-  stop.append(h('p', 'say', h('b', '', 'AI: '), c.text));
+  // The samples' descriptions are hand-written; anything else came from Gemini and says so.
+  stop.append(h('p', 'say', ...(saved === 'sample' ? [] : [h('b', '', 'AI: ')]), c.text));
   describeT = setTimeout(() => stop.querySelector('.say')?.remove(), DESCRIBE_MS);
 }
 
