@@ -56,7 +56,8 @@ function imageTexture(img, max, aniso) {
   c.width = pot(aspect >= 1 ? long : long * aspect); c.height = pot(aspect >= 1 ? long / aspect : long);
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = Math.min(4, aniso);
+  tex.anisotropy = Math.min(16, aniso); // the floor is seen at a grazing angle
+  tex.wrapS = tex.wrapT = THREE.MirroredRepeatWrapping; // past the frame the diorama continues the painting mirrored
   return { tex, aspect };
 }
 // The scene's depth picture as {data, w, h} (one byte per pixel from its red channel, rows top first), or null when
