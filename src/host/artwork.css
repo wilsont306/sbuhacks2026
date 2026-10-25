@@ -59,6 +59,19 @@
 .art-shelf { position: relative; margin-top: 20px; }
 .art-shelf.major { --car-w: 300px; --mat-h: 206px; --plate-h: 164px; --title-fs: 28px; }
 .art-shelf.minor { --car-w: 248px; --mat-h: 166px; --plate-h: 124px; --title-fs: 24px; margin-top: 28px; }
+/* Three lines (the saved projects below the samples): every carriage, the engine and the gaps go compact, so how it
+   works stays on top and all three lines fit above the foot. */
+.art-gallery.three { padding-top: calc(16px + var(--bleed-y)); }
+.three .art-head h2 { font-size: 40px; }
+.three .art-shelf.major, .three .art-shelf.minor { --car-w: 212px; --mat-h: 112px; --plate-h: 80px; --title-fs: 20px; margin-top: 8px; }
+.three .art-shelf-head h3, .three .minor .art-shelf-head h3 { font-size: 22px; }
+.three .art-row { padding-top: 26px; padding-bottom: 36px; }
+.three .art-add { width: 210px; }
+.three .art-add .art-title { font-size: 24px; }
+.three .art-add-note { font-size: 18px; }
+.three .art-engine { width: 200px; height: 133px; margin: 28px 0 -27px; }
+.three .art-meta { min-height: 26px; }
+.three .art-by { font-size: 18px; }
 .art-shelf::before {
   content: ''; position: absolute; left: calc(-1 * var(--edge)); right: calc(-1 * var(--edge)); bottom: 0; height: 20px;
   background:
@@ -204,6 +217,10 @@
 }
 .art-card.selected .art-meta, .art-card:hover .art-meta, .art-card:focus-within .art-meta { opacity: 1; }
 .art-by { overflow: hidden; white-space: nowrap; font: 400 22px/1.3 var(--font-ui); color: var(--frame-ink); }
+/* A saved project's carriage always says where it is kept: "Saved to Snowflake", or "On this TV" for today's copy
+   whose Snowflake row has not been seen. */
+.art-card:has(.art-saved) .art-meta { opacity: 1; }
+.art-saved { color: var(--lamp); }
 .art-chip { padding: 0 10px; border: 1px solid var(--cream); border-radius: var(--radius-pill); font-family: var(--font-ui); color: var(--cream); }
 
 /* The locomotive heading today's train: the "Add a picture" button, its name painted above it like a headboard. */

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateScene } from '../src/shared/scene-validate.js';
 import {
-  readMirror, trimMirror, mirrorItem, mergeGallery, pollVerdict, reasonMessage, isToday, safeUrl, isSceneUrl,
+  readMirror, trimMirror, mirrorItem, mergeGallery, galleryLines, projectTitle, pollVerdict, reasonMessage, isToday, safeUrl, isSceneUrl,
   moveShelf, peekLayers, MIRROR_CAP, MIRROR_SCENE_MAX, GALLERY_CARDS, POLL_AT, PEEK_Z,
 } from '../src/host/gallery.js';
 
@@ -77,6 +77,33 @@ test('mergeGallery caps at 12 and always keeps room for the samples', () => {
   assert.equal(cards.length, GALLERY_CARDS);
   assert.deepEqual(cards.slice(-3).map((c) => c.id), ['sample-1', 'sample-2', 'sample-3']);
   assert.equal(cards[0].id, 'p0');
+});
+
+test('galleryLines: the samples on one line, up to 12 saved projects (Snowflake and today\'s mirror) newest first on the other', () => {
+  const samples = [1, 2, 3].map((n) => ({ n, id: 'sample-' + n, name: 'S' + n, image: '/s.jpg', scene: '/s.json' }));
+  const local = [item('mine', NOW - 1000), item('both', NOW - 9000)];
+  const remote = Array.from({ length: 14 }, (_, i) => ({ id: 'r' + i, name: 'Untitled', source: 'drop', image_url: 'https://x/r.jpg', title_guess: 'unknown', created_at: new Date(NOW - 2000 - i).toISOString() }))
+    .concat([{ id: 'both', name: 'Both', title_guess: 'Both', created_at: new Date(NOW - 9000).toISOString() }]);
+  const { samples: sam, saved } = galleryLines({ samples, local, remote }, GALLERY_CARDS);
+  assert.deepEqual(sam.map((c) => c.id), ['sample-1', 'sample-2', 'sample-3']);
+  assert.equal(saved.length, GALLERY_CARDS);
+  assert.deepEqual(saved.slice(0, 2).map((c) => [c.id, c.saved]), [['mine', 'local'], ['r0', 'saved']]);
+  assert.ok(saved.every((c, i) => i === 0 || saved[i - 1].at >= c.at), 'newest first');
+  const { saved: few } = galleryLines({ samples, local: [], remote: [remote[14]] });
+  assert.deepEqual(few.map((c) => [c.id, c.saved]), [['both', 'saved']]);
+  assert.deepEqual(galleryLines({ samples }).saved, []);
+  assert.deepEqual(galleryLines(), { samples: [], saved: [] });
+});
+
+test('projectTitle: the title guess, else the first object labels, else Untitled and the time', () => {
+  const at = new Date(2026, 9, 24, 20, 38).getTime();
+  assert.equal(projectTitle('Steam Train on the Bridge', null, at), 'Steam Train on the Bridge');
+  const scene = { objects: [{ label: ' Steam\ntrain ' }, { label: 'Bridge' }, { label: 'River' }] };
+  for (const t of ['unknown', 'Unknown', 'Untitled', '', '  ', null, 7]) assert.equal(projectTitle(t, scene, at), 'Steam train · Bridge', String(t));
+  assert.equal(projectTitle('unknown', { objects: [{ label: 'moon' }] }, at), 'Moon');
+  assert.equal(projectTitle('unknown', { objects: [null, { label: '' }] }, at), 'Untitled, 20:38');
+  assert.equal(projectTitle('unknown', null, 0), 'Untitled');
+  assert.equal(projectTitle('x'.repeat(200), null, at).length, 120);
 });
 
 test('mergeGallery drops unsafe URLs and malformed entries', () => {

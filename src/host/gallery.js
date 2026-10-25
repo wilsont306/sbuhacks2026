@@ -86,6 +86,25 @@ export function mergeGallery({ samples = [], local = [], remote = [] } = {}, max
   return [...projects, ...sam];
 }
 
+// mergeGallery's cards as the gallery's two picture lines: the samples, and the saved projects (newest first, up to
+// `max`; Snowflake's rows and today's mirror, deduplicated by id).
+export function galleryLines({ samples = [], local = [], remote = [] } = {}, max = GALLERY_CARDS) {
+  const n = (Array.isArray(samples) ? samples : []).length, all = mergeGallery({ samples, local, remote }, max + n);
+  return { samples: all.filter((c) => c.saved === 'sample'), saved: all.filter((c) => c.saved !== 'sample') };
+}
+
+// A saved project's carriage name: its title guess, else its first object labels (a reading Gemini could not name
+// still knows what is in it), else 'Untitled' and the time it was saved.
+export function projectTitle(title, scene, at) {
+  const t = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim() : '';
+  if (t && !/^(unknown|untitled)$/i.test(t)) return t.slice(0, 120);
+  const labels = isObj(scene) && Array.isArray(scene.objects)
+    ? scene.objects.map((o) => (isObj(o) && typeof o.label === 'string' ? o.label.replace(/\s+/g, ' ').trim() : '')).filter(Boolean) : [];
+  if (labels.length) { const t2 = labels.slice(0, 2).join(' · '); return (t2[0].toUpperCase() + t2.slice(1)).slice(0, 120); }
+  const d = new Date(Number.isFinite(at) && at > 0 ? at : NaN), pad = (x) => String(x).padStart(2, '0');
+  return Number.isFinite(d.getTime()) ? `Untitled, ${pad(d.getHours())}:${pad(d.getMinutes())}` : 'Untitled';
+}
+
 // One save-confirmation poll: 'saved' on the row, 'local' when Snowflake is not configured at all, else 'wait'.
 export function pollVerdict(status, body) {
   if (status === 200 && isObj(body) && body.ok === true) return 'saved';
