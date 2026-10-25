@@ -46,13 +46,13 @@ test('clock and stamp: local HH:MM; ISO stamps get the weekday, free text stays'
   assert.equal(m.stamp(undefined), '');
 });
 
-test('labelOf: guesses, chip, credit and thumbnail from a scene', () => {
+test('labelOf: the artist guess, chip, credit and thumbnail (the sign title is gallery.js projectTitle)', () => {
   const scene = {
     id: 'sample-turner', edited: true, credit: 'J. M. W. Turner, 1844. The National Gallery, London',
     title_guess: 'Rain, Steam and\nSpeed', artist_guess: 'J. M. W. Turner', image_url: '/assets/turner-1920.jpg',
   };
   assert.deepEqual(m.labelOf(scene), {
-    artist: 'J. M. W. Turner', title: 'Rain, Steam and Speed', chip: 'AI draft, hand-corrected (sample)',
+    artist: 'J. M. W. Turner', chip: 'AI draft, hand-corrected (sample)',
     credit: 'J. M. W. Turner, 1844. The National Gallery, London', thumb: '/assets/turner-1920.jpg',
   });
   assert.equal(m.labelOf({ credit: null }).credit, '');
@@ -62,7 +62,6 @@ test('labelOf: guesses, chip, credit and thumbnail from a scene', () => {
 
 test('labelOf: unknown guesses read as unknown, bad fields are dropped', () => {
   const l = m.labelOf({ title_guess: 'unknown', artist_guess: 42, image_url: 'javascript:x' });
-  assert.equal(l.title, 'Title unknown');
   assert.equal(l.artist, 'Artist unknown');
   assert.equal(l.chip, 'AI draft, not a museum record');
   assert.equal(l.thumb, '');

@@ -2,12 +2,13 @@
 // POST /api/interpret, then played as a scene; a phone's scene URL, a bundled sample (1, 2, 3, boot and R) or a gallery
 // sample (G) plays the same way without Gemini. Mirrors today's projects in localStorage 'tt.projects' and polls
 // GET /api/projects?id= for the "Saved to Snowflake" badge. Every failure is a designed status line, never a thrown error.
-// The gallery is two lines: how it works (the "Add a picture" engine and a three-step demo), then the samples; the
-// chosen sample peeks in 3D: its picture sinks and each object, cut along its mask, lifts by its depth guess.
+// The gallery is lines of carriages: how it works (the "Add a picture" engine and a three-step demo), the samples, and
+// the saved projects (Snowflake's list, GET /api/projects, with today's mirror; the line shows once there is one). The
+// chosen carriage peeks in 3D: its picture sinks and each object, cut along its mask, lifts by its depth guess.
 import { downscale } from '../shared/downscale.js';
 import { validateScene } from '../shared/scene-validate.js';
 import {
-  MIRROR_KEY, POLL_AT, STATUS_MS, GALLERY_CARDS, readMirror, trimMirror, mirrorItem, mergeGallery,
+  MIRROR_KEY, POLL_AT, STATUS_MS, GALLERY_CARDS, readMirror, trimMirror, mirrorItem, galleryLines, projectTitle,
   pollVerdict, reasonMessage, moveShelf, peekLayers, isSceneUrl, safeUrl,
 } from './gallery.js';
 import { apiHeaders, load as loadKeys } from '../shared/byok.js';
@@ -17,7 +18,7 @@ import './artwork.css';
 let game = null, audio = null, margins = null;
 let state = { scene: null, id: null, saved: 'sample' };
 let gen = 0, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
-let gal = null, galOpen = false, galRows = [[], []], galSel = { s: 0, i: 0 };
+let gal = null, galOpen = false, galGen = 0, galRows = [[], [], []], galSel = { s: 0, i: 0 }, galRemote = [];
 let galHover = false, galIdle = false; // the pointer made the current choice; the pointer left it and nothing is chosen
 const ADD = { add: true }; // the "Add a picture" engine that leads the how-it-works line
 const peeks = new Map(); // card id -> promise of its validated scene or null, fetched once on the first peek
@@ -171,8 +172,33 @@ export async function loadSample(n) {
   return present(my, scene, safeUrl(s.image) || safeUrl(scene.image_url), 'sample');
 }
 
-// A gallery card is a sample: it plays like keys 1 to 3, with the appear sound. Never Gemini.
-const openCard = (c) => loadSample(c.n).then((ok) => ok && tell(audio, 'play', 'appear'));
+// A saved project from the gallery: its scene (today's local copy, its Blob file, else Snowflake's row) played as
+// saved. Never Gemini.
+async function openProject(c) {
+  if (!game) return false;
+  const my = ++gen;
+  status('Opening a saved picture…');
+  let scene = await sceneFor(c);
+  if (!scene && my === gen) {
+    const { body } = await getJson('/api/projects?id=' + encodeURIComponent(c.id), { ms: 9000 });
+    const raw = isObj(body) && isObj(body.project) && isObj(body.project.scene) ? body.project.scene : null;
+    scene = raw ? validateScene(raw, raw) : null;
+  }
+  if (my !== gen) return false;
+  const image = scene && (safeUrl(scene.image_url) || c.image);
+  if (!image) { status("Couldn't open that saved picture; staying on this one", STATUS_MS); return false; }
+  const ok = await present(my, scene, image, c.saved === 'saved' ? 'saved' : 'local');
+  if (!ok && my === gen) status("Couldn't open that saved picture; staying on this one", STATUS_MS); // its image would not load
+  return ok;
+}
+
+// A gallery card plays like keys 1 to 3 (a sample) or as its saved project, with the appear sound.
+const openCard = (c) => (c.saved === 'sample' ? loadSample(c.n) : openProject(c)).then((ok) => ok && tell(audio, 'play', 'appear'));
+// A carriage's name: a sample's title, a project's title guess (else its objects, else Untitled and the time).
+const nameOf = (c, scene = c.scene) => (c.saved === 'sample' ? c.title : projectTitle(c.title, scene, c.at));
+// The line under it: a sample's artist, a project's save state (Snowflake's row, or only today's copy on this TV).
+const markOf = (c) => (c.saved === 'sample' ? c.by : c.saved === 'saved' ? 'Saved to Snowflake' : 'On this TV');
+const mirrorList = () => { try { return readMirror(localStorage.getItem(MIRROR_KEY)); } catch { return []; } };
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -376,12 +402,16 @@ function cardEl(c, s, i) {
   const card = el('article', 'art-card');
   const open = el('button', 'art-open');
   open.type = 'button';
-  open.title = c.title;
-  const { mat, plate } = printEl(c);
+  const { mat, plate } = printEl(c), name = el('span', 'art-title', nameOf(c));
+  open.title = name.textContent;
   mat.append(el('span', 'art-peekline'));
   const meta = el('span', 'art-meta');
-  meta.append(el('span', 'art-by', c.by)); // the sample's artist line
-  open.append(mat, el('span', 'art-title', c.title), meta);
+  meta.append(el('span', c.saved === 'sample' ? 'art-by' : 'art-by art-saved', markOf(c)));
+  open.append(mat, name, meta);
+  // A project Gemini could not name is named by its objects once its scene file is read (the peek reads it anyway).
+  if (c.saved !== 'sample' && !c.scene && name.textContent.startsWith('Untitled')) {
+    sceneFor(c).then((sc) => { if (sc) open.title = name.textContent = nameOf(c, sc); });
+  }
   open.addEventListener('click', () => gal.detail.show(c));
   card.addEventListener('pointermove', (e) => {
     if (!moved(e)) return;
@@ -423,33 +453,57 @@ function select(sel, hover = false, quiet = false) {
   if (!c.add) peek(li.firstElementChild, c);
 }
 
-// Builds both lines: how it works (the engine, the only thing on it to choose, then the three demo steps) and the
-// samples, choosing the first sample.
-function renderGallery(sam) {
-  galRows = [[ADD], sam];
-  gal.shelves.forEach((sh, s) => {
-    sh.count.textContent = s === 1 ? String(sam.length) : '';
-    sh.list.replaceChildren(...galRows[s].map((c, i) => {
-      const li = el('li', 'art-slot');
-      li.style.setProperty('--n', s * 4 + i);
-      li.append(c.add ? addTile() : cardEl(c, s, i));
-      return li;
-    }));
-  });
+function fillShelf(s) {
+  const sh = gal.shelves[s];
+  sh.count.textContent = s ? String(galRows[s].length) : '';
+  sh.sec.hidden = s === 2 && !galRows[s].length; // the saved line shows once there is something on it
+  sh.list.replaceChildren(...galRows[s].map((c, i) => {
+    const li = el('li', 'art-slot');
+    li.style.setProperty('--n', s * 4 + i);
+    li.append(c.add ? addTile() : cardEl(c, s, i));
+    return li;
+  }));
+}
+
+// Builds the lines: how it works (the engine, the only thing on it to choose, then the three demo steps), the samples
+// and the saved projects, choosing the first sample. With a saved line every carriage is compact, so all three fit.
+function renderGallery({ samples: sam, saved }) {
+  galRows = [[ADD], sam, saved];
+  gal.root.classList.toggle('three', saved.length > 0);
+  for (let s = 0; s < gal.shelves.length; s++) fillShelf(s);
   // The steps are not in galRows, so arrows never land on them.
   gal.shelves[0].list.append(...ghostSteps(sam.find((c) => c.id === 'sample-sketch') || sam[0]));
   select({ s: 1, i: 0 }, false, true);
   for (const sh of gal.shelves) fades(sh.list);
 }
 
+// Snowflake's list landed after the gallery opened: only the saved line is rebuilt, and the choice stays put.
+function renderSaved(saved) {
+  const idle = galIdle;
+  galRows[2] = saved;
+  gal.root.classList.toggle('three', saved.length > 0);
+  fillShelf(2);
+  select(galSel, galHover, true); // a pointer's choice still folds away when the pointer leaves
+  if (idle) unchoose();
+  fades(gal.shelves[2].list);
+}
+
 async function openGallery() {
   if (!gal) return;
+  const my = ++galGen;
   galOpen = true;
   gal.root.hidden = false;
   tell(audio, 'play', 'gallery');
-  const sam = await samples();
-  if (!galOpen) return;
-  renderGallery(mergeGallery({ samples: sam }, GALLERY_CARDS));
+  const sam = await samples(), local = mirrorList();
+  if (!galOpen || my !== galGen) return;
+  // The last Snowflake list draws at once, so the gallery opens at its final size instead of shrinking when it lands.
+  renderGallery(galleryLines({ samples: sam, local, remote: galRemote }, GALLERY_CARDS));
+  // Then Snowflake's saved projects (a failure or an unconfigured store leaves today's copies only).
+  const { body } = await getJson('/api/projects', { ms: 8000 });
+  if (!galOpen || my !== galGen || !isObj(body) || !Array.isArray(body.projects)) return;
+  galRemote = body.projects; // an emptied list clears it too
+  const { saved } = galleryLines({ samples: sam, local, remote: galRemote }, GALLERY_CARDS);
+  if (saved.map((c) => c.id + c.saved).join() !== galRows[2].map((c) => c.id + c.saved).join()) renderSaved(saved);
 }
 
 function closeGallery() {
@@ -605,9 +659,9 @@ function buildDetail() {
     view.style.cursor = '';
     tip.hidden = true;
     view.replaceChildren(print.mat, tip);
-    view.setAttribute('aria-label', c.title);
-    kicker.textContent = c.by;
-    title.textContent = c.title;
+    view.setAttribute('aria-label', nameOf(c));
+    kicker.textContent = markOf(c);
+    title.textContent = nameOf(c);
     hint.textContent = '';
     note.textContent = 'Reading the picture…';
     solo.onclick = () => { tell(audio, 'play', 'punch'); close(); openCard(c); };
@@ -618,6 +672,7 @@ function buildDetail() {
     peek(print.mat, c);
     const scene = await sceneFor(c);
     if (me !== my) return;
+    title.textContent = nameOf(c, scene || c.scene); // a project Gemini could not name, named by its objects
     parts = peekLayers(scene, { surfaces: true });
     // peek() numbers its cut-outs in this same order: peekLayers without the receding planes, sorted the same way.
     let k = 0;
@@ -628,7 +683,7 @@ function buildDetail() {
       const [x0, y0, x1, y1] = o.box;
       parts.push({ label: o.label, points: o.mask || [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] });
     }
-    view.setAttribute('aria-label', `${c.title}: ${parts.map((p) => p.label).join(', ')}`);
+    view.setAttribute('aria-label', `${title.textContent}: ${parts.map((p) => p.label).join(', ')}`);
     hint.textContent = parts.length ? 'Point at the picture: each part lifts out and says its name.' : '';
     note.textContent = !parts.length ? 'No saved reading: this one rides as a flat picture.'
       : c.saved === 'sample' ? 'What each one does, you find out on board.'
@@ -699,7 +754,8 @@ function buildBoard() {
   back.addEventListener('click', () => { close(); openGallery(); });
   modalKeys(root, close);
   const show = (c) => {
-    title.textContent = c.title;
+    title.textContent = nameOf(c); // a project's name, by its objects once its scene is read (the sidebar read it)
+    if (c.saved !== 'sample') sceneFor(c).then((sc) => { if (sc && !root.hidden) title.textContent = nameOf(c, sc); });
     qrKey = null;
     seatKeys = [];
     refresh();
@@ -755,10 +811,10 @@ function buildDom() {
     sec.insertAdjacentHTML('afterbegin', SCENERY);
     sec.append(top, list);
     root.append(sec);
-    return { count, list };
+    return { sec, count, list };
   };
-  // Today's line is the hero; the samples wait on a quieter siding below it.
-  const shelvesDom = [shelf('How it works', 'major'), shelf('Samples', 'minor')];
+  // Today's line is the hero; the samples wait on a quieter siding below it, and the saved projects below them.
+  const shelvesDom = [shelf('How it works', 'major'), shelf('Samples', 'minor'), shelf('Saved', 'minor saved')];
   // Every instruction lives in one quiet line at the foot of the screen.
   const foot = el('footer', 'art-foot');
   const keys = (caps, text) => {
