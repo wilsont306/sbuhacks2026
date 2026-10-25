@@ -529,6 +529,11 @@ export function toggleGallery() {
   else openGallery();
 }
 
+// Opens the gallery if it is not open (cover.js's "Host a ride" ticket).
+export function showGallery() {
+  if (!galOpen) openGallery();
+}
+
 export const current = () => ({ scene: state.scene, id: state.id, saved: state.saved });
 
 function onKey(e) {

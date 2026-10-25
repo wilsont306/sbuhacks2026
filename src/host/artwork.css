@@ -9,7 +9,7 @@
   /* The window's edges: #tv already spans the width (host.css widens it by --bleed-x a side); these screens also
      reach over the letterbox above and below it (--bleed-y), so nothing of the stage or the page shows beside them.
      Their content stays inside the central 1920 x 1080 frame. */
-  position: absolute; inset: calc(-1 * var(--bleed-y)) 0;
+  position: absolute; inset: calc(-1 * var(--bleed-y) - 2px) -2px; /* 2 px over, so no sliver of the stage canvas shows */
   color: var(--cream); font: 400 var(--fs-body-tv)/1.2 var(--font-ui);
   animation: tt-fade var(--fade) ease-out;
 }
