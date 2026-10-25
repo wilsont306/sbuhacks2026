@@ -28,7 +28,7 @@
 .art-sky .bite { fill: var(--rail-night); }
 .art-sky .star { fill: var(--frame-ink); opacity: .35; animation: art-star 3.2s ease-in-out infinite alternate; }
 .art-scenery {
-  position: absolute; z-index: -1; left: calc(-1 * var(--edge)); bottom: 17px; width: calc(1920px + 2 * var(--bleed-x)); height: 200px;
+  position: absolute; z-index: -1; left: calc(-1 * var(--edge)); bottom: 17px; width: calc(1920px + 2 * var(--bleed-x) + 4px); height: 200px; /* + the 2 px overscan a side */
   overflow: hidden; pointer-events: none;
 }
 .art-scenery .hills { fill: color-mix(in srgb, var(--rail-dusk) 70%, var(--rail-night)); }

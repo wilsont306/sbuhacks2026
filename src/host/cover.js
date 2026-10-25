@@ -1,9 +1,11 @@
 // The TV page's cover, "Canvas Express": the night line, where a paper train roams a winding rail under the title,
 // and one ticket, "Host a ride". Pressing it (a click, Enter or Space) punches the ticket, opens the gallery
-// underneath and crumples the cover like a sheet of paper, which falls away to show the gallery. ?cover=0 skips it.
+// underneath and crumples the cover like a sheet of paper, which falls away to show the gallery. Keys 1 to 3, and any
+// scene after the boot sample (a phone's picture, R, a script's loadScene), crumple it without the gallery, so scripted
+// tests and the attendant get past it. ?cover=0 skips it.
 // Phones never see it: they open the join page, every QR carries a room, and join.html sends only a computer without
 // one here. The ticket is also the page's first gesture, which lets the browser start its sound.
-import { showGallery } from './artwork.js';
+import { showGallery, loadSample } from './artwork.js';
 import * as audio from './audio.js';
 import './cover.css';
 
@@ -33,6 +35,10 @@ export function crumpleStops(n = 28, aspect = 16 / 9) {
 const SVG = 'http://www.w3.org/2000/svg';
 // The rail: in from beyond the left edge, over two gentle rises, out beyond the right; the train follows the same path.
 const RAIL = 'M -420 880 C -40 880, 240 760, 640 792 S 1180 930, 1480 862 S 1980 760, 2340 812';
+// The rail run on straight past both ends by ext frame px (in level, as it starts; out along its last slope, 52 in
+// 360), for windows wider than 16:9, whose edges lie beyond the frame's.
+const railPath = (ext) => (ext > 0 ? `M ${-420 - ext} 880 L${RAIL.slice(1)} L ${2340 + ext} ${(812 + ext * 52 / 360).toFixed(1)}` : RAIL);
+const lengthOf = (d) => { const p = document.createElementNS(SVG, 'path'); p.setAttribute('d', d); return p.getTotalLength(); };
 
 // The paper train, cut from cream card with an ink edge: the engine facing the way it runs, then two carriages
 // with their lamps lit. Colours come from CSS.
@@ -75,7 +81,7 @@ function rail() {
   for (const cls of ['sleepers', 'rails', 'gap']) {
     const p = document.createElementNS(SVG, 'path');
     p.setAttribute('class', cls);
-    p.setAttribute('d', RAIL);
+    p.setAttribute('d', railPath(1600)); // to the edges of a window up to about 5:1
     svg.append(p);
   }
   return svg;
@@ -107,7 +113,6 @@ function show() {
   root.setAttribute('role', 'dialog');
   root.setAttribute('aria-modal', 'true');
   root.setAttribute('aria-labelledby', 'coverTitle');
-  root.tabIndex = -1;
   const frame = el('div', 'cover-frame'), title = el('h1', 'cover-title'), ticket = el('button', 'cover-ticket');
   title.id = 'coverTitle';
   title.textContent = 'Canvas Express';
@@ -115,11 +120,16 @@ function show() {
   ticket.append(el('span', 'cover-ticket-name'));
   ticket.firstChild.textContent = 'Host a ride';
   const train = el('div', 'cover-train');
+  // A window wider than about 2.3:1 (#tv widened by its bleed) runs the train's path on past its edges, the loop slowed
+  // to keep its speed, so it still enters and leaves out of sight. shortcut: measured once, at show; a window widened
+  // further later can see the train pop in at an edge until reload.
+  const bleed = Math.max(0, (tv.offsetWidth - 1920) / 2), ext = Math.max(0, Math.ceil(bleed - 280)), path = railPath(ext);
+  if (ext) train.style.setProperty('--roam', `${(22 * lengthOf(path) / lengthOf(RAIL)).toFixed(2)}s`);
   // Engine first: each car runs the same rail, the ones behind it a little later.
   [ENGINE, CARRIAGE, CARRIAGE].forEach((art, i) => {
     const car = el('div', 'cover-car' + (i ? '' : ' engine'), art);
     car.style.setProperty('--i', String(i));
-    car.style.offsetPath = `path("${RAIL}")`; // the rail's own path, so the train never leaves it
+    car.style.offsetPath = `path("${path}")`; // the rail's own path, so the train never leaves it
     train.append(car);
   });
   frame.insertAdjacentHTML('afterbegin', SKY);
@@ -127,18 +137,47 @@ function show() {
   root.append(frame, el('div', 'cover-paper'), creases()); // the sheet's cream back shows as it crumples
   tv.append(root);
   ticket.focus();
-  // The keys stay here, so nothing walks or opens behind the cover; the ticket keeps the focus.
-  root.addEventListener('keydown', (e) => { e.stopPropagation(); });
-  root.addEventListener('focusout', (e) => { if (!root.contains(e.relatedTarget) && root.isConnected) setTimeout(() => ticket.focus(), 0); });
-  ticket.addEventListener('click', () => ride(root, ticket), { once: true });
+  // The keys stay here, so nothing walks or opens behind the cover; the ticket keeps the focus. 1, 2 and 3 are the
+  // attendant's shortcut past it: the cover crumples and that sample plays.
+  root.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (!e.repeat && /^[123]$/.test(e.key)) {
+      ride(root, ticket, false);
+      loadSample(Number(e.key)).then((ok) => { if (ok) try { audio.play('appear'); } catch { /* optional */ } });
+    }
+  });
+  root.addEventListener('focusout', (e) => {
+    if (!root.contains(e.relatedTarget) && root.isConnected && !root.classList.contains('crumpling')) setTimeout(() => ticket.focus(), 0);
+  });
+  // A picture dropped on the cover stops here: the page's drop (artwork.js) would read and stage it unseen behind it.
+  for (const t of ['dragover', 'drop']) root.addEventListener(t, (e) => { e.preventDefault(); e.stopPropagation(); });
+  ticket.addEventListener('click', () => ride(root, ticket, true));
+  // Any scene after the boot sample (a phone's picture, R, a script's window.game.loadScene) means the TV is in use:
+  // the cover crumples away on its own, so nothing ever plays hidden behind it.
+  let booted = false;
+  const stop = window.game && typeof window.game.onHotspot === 'function' ? window.game.onHotspot((e) => {
+    if (!e || e.type !== 'scene' || !root.isConnected) return;
+    if (booted) ride(root, ticket, false);
+    booted = true;
+  }) : null;
+  root.addEventListener('cover:gone', () => { if (typeof stop === 'function') stop(); }, { once: true });
 }
 
-// The ticket punched, the gallery opened under the page, then the page crumples into a ball that drops away.
-function ride(root, ticket) {
-  ticket.classList.add('punched');
-  try { audio.play('punch'); } catch { /* sound is optional */ }
-  showGallery();
+// The page crumples into a ball that drops away; from the ticket, punched first and with the gallery opened under it.
+// Like the train, the crumple plays under reduced motion too, by the owner's choice: it is the transition asked for, and
+// the kiosk runs with reduced motion on.
+function ride(root, ticket, gallery) {
+  if (root.classList.contains('crumpling')) return; // once
+  if (gallery) {
+    ticket.classList.add('punched');
+    try { audio.play('punch'); } catch { /* sound is optional */ }
+    showGallery();
+  }
   root.classList.add('crumpling');
+  // The focus and keys go to the page under it, so the gallery's arrows work while the sheet falls; the sheet itself
+  // still takes clicks where it is drawn, and a second click on the ticket does nothing.
+  ticket.blur();
+  ticket.disabled = true;
   const [flat, fold, ball] = crumpleStops();
   // Solid until it drops: the fade is only in the last stretch, so the gallery never shows through the sheet.
   const run = root.animate([
@@ -150,7 +189,7 @@ function ride(root, ticket) {
   const sheet = (sel, frames) => root.querySelector(sel).animate(frames, { duration: 1500, fill: 'forwards' });
   sheet('.cover-paper', [{ opacity: 0 }, { opacity: 0, offset: 0.18 }, { opacity: 0.94, offset: 0.6 }, { opacity: 0.94 }]);
   sheet('.cover-creases', [{ opacity: 0 }, { opacity: 1, offset: 0.3 }, { opacity: 1 }]);
-  const done = () => { root.remove(); document.getElementById('artGallery')?.focus?.(); };
+  const done = () => { root.dispatchEvent(new Event('cover:gone')); root.remove(); };
   run.finished.then(done, done);
 }
 

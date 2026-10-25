@@ -17,7 +17,7 @@ import './artwork.css';
 
 let game = null, audio = null, margins = null;
 let state = { scene: null, id: null, saved: 'sample' };
-let gen = 0, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
+let gen = 0, bootGen = -1, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
 let gal = null, galOpen = false, galGen = 0, galRows = [[], [], []], galSel = { s: 0, i: 0 }, galRemote = [];
 let galHover = false, galIdle = false; // the pointer made the current choice; the pointer left it and nothing is chosen
 const ADD = { add: true }; // the "Add a picture" engine that leads the how-it-works line
@@ -66,7 +66,7 @@ async function present(my, scene, image, saved, fallback) {
   status(null);
   tell(margins, 'setScene', scene, { saved, image: shown }); // the stops crop the picture actually on stage
   tell(audio, 'prepare', scene);
-  closeGallery();
+  if (my !== bootGen) closeGallery(); // the boot sample can land after the cover's ticket opened the gallery
   return true;
 }
 
@@ -888,4 +888,5 @@ export function init(opts = {}) {
   wireDrop();
   addEventListener('keydown', onKey, true);
   loadSample(1);
+  bootGen = gen;
 }

@@ -7,7 +7,8 @@
 <script>
   // A computer opening the site without a TV's room is a host: send it to the TV page and its "Canvas Express"
   // cover. Phones stay: every QR carries ?room=, and a phone without one keeps the screen telling it to scan the TV.
-  if (!/[?&]room=/.test(location.search) && matchMedia('(hover: hover) and (pointer: fine)').matches) location.replace('/host.html');
+  // Plain ES5: iPhones on iOS 13 parse this page. replace() keeps Back from bouncing; the query and hash go along.
+  if (!/[?&]room=/.test(location.search) && matchMedia('(hover: hover) and (pointer: fine)').matches) location.replace('/host.html' + location.search + location.hash);
 </script>
 </head>
 <body>

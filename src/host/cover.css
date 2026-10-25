@@ -8,7 +8,6 @@
   position: absolute; inset: calc(-1 * var(--bleed-y, 0px) - 2px) -2px; z-index: 30; overflow: hidden; outline: none;
   background: var(--rail-night); color: var(--cream); transform-origin: 50% 50%;
 }
-.cover.crumpling { pointer-events: none; }
 .cover-frame { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform: translate(-50%, -50%); }
 
 .cover-sky, .cover-rail { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -24,8 +23,9 @@
 .cover-rail .gap { stroke: var(--rail-night); stroke-width: 10; }
 
 /* The train runs the rail's own path: the engine leads, each carriage 1.55 s behind it, round the loop every 22 s
-   (off the right edge, back in at the left). The cars lean with the rail. This roaming, like the gallery's passing
-   scenery, ignores reduced motion by the owner's choice. */
+   (off the right edge, back in at the left; longer on a window wide enough that cover.js runs the path on, --roam).
+   The cars lean with the rail. This roaming, like the gallery's passing scenery and the cover's crumple, ignores
+   reduced motion by the owner's choice. */
 .cover-train { position: absolute; inset: 0; pointer-events: none; }
 .cover-car {
   position: absolute; left: 0; top: 0; width: 190px; offset-anchor: 50% 92%; offset-rotate: auto;
@@ -33,7 +33,7 @@
 }
 .cover-car.engine { width: 230px; }
 .cover-car svg { display: block; width: 100%; height: auto; overflow: visible; }
-#tv .cover .cover-car { animation: cover-roam 22s linear calc(var(--i, 0) * 1.55s - 10s) infinite !important; }
+#tv .cover .cover-car { animation: cover-roam var(--roam, 22s) linear calc(var(--i, 0) * 1.55s - 10s) infinite !important; }
 @keyframes cover-roam { from { offset-distance: 0%; } to { offset-distance: 100%; } }
 .cover-car .paper { fill: var(--paper); stroke: var(--ink); stroke-width: 3; stroke-linejoin: round; }
 .cover-car .band { fill: var(--livery); }
