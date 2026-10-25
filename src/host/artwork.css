@@ -270,14 +270,20 @@
 .art-step-arrow .head { fill: var(--brass); }
 @keyframes art-flow { to { stroke-dashoffset: -16; } }
 
-/* Step 4's rider: a cut-paper figure in the first player's colour, standing on the garden path in front of the picture. */
-.art-rider {
-  position: absolute; left: 46%; top: 60%; width: 6%; aspect-ratio: 1 / 2.2; transform: translateZ(72px);
-  filter: drop-shadow(0 0 1px var(--paper)) drop-shadow(0 0 1px var(--paper)) drop-shadow(4px 8px 4px var(--vignette));
+/* Step 4's phone, held up in the lit window and leaning a little: an ink handset whose screen is the walker's own
+   view, the sketch close up at its house, and under it the phone's two walk keys in brass. */
+.art-phone {
+  position: relative; z-index: 1; display: flex; flex-direction: column; gap: 5%; height: calc(var(--plate-h) * .9); aspect-ratio: 9 / 16;
+  padding: 9% 7% 7%; border-radius: 12px; background: var(--ink); transform: translateY(-4px) rotate(-5deg);
+  box-shadow: 0 0 0 2px var(--steel-2), 0 8px 14px var(--rail-night);
 }
-.art-rider::before, .art-rider::after { content: ''; position: absolute; background: var(--slot-1); }
-.art-rider::before { left: 22%; top: 0; width: 56%; aspect-ratio: 1; border-radius: 50%; }
-.art-rider::after { inset: 30% 0 0; clip-path: polygon(30% 0, 70% 0, 100% 100%, 0 100%); }
+.art-phone-screen {
+  flex: 1; min-height: 0; border-radius: 4px; background-color: var(--paper); background-repeat: no-repeat;
+  background-size: 340% auto; background-position: 10% 56%;
+}
+.art-phone-pad { flex: none; display: flex; justify-content: center; gap: 22%; height: 12%; }
+.art-phone-key { height: 100%; aspect-ratio: 1; background: var(--brass); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.art-phone-key.back { clip-path: polygon(100% 0, 0 50%, 100% 100%); }
 
 /* The foot of the screen: the keys as keycaps, then the one caveat, kept quiet. */
 .art-foot {

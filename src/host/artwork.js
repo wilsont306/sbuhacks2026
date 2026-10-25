@@ -377,19 +377,31 @@ const STEP_ARROW = `<svg class="art-step-arrow" viewBox="0 0 160 44" aria-hidden
 </svg>`;
 const STEPS = ['Drop or photograph a picture', 'Gemini outlines what is in it', 'It stands up in 3D', 'Step into the world from your phone'];
 
+// Step 4's window: a phone held up in it, its screen the walker's own view (the sketch close up, at the house, at eye
+// level) over its walk buttons, so the step shows the phone and not the picture of step 3 again.
+function phoneEl(sample) {
+  const mat = el('span', 'art-mat selected'), phone = el('span', 'art-phone'), screen = el('span', 'art-phone-screen');
+  const pad = el('span', 'art-phone-pad');
+  screen.style.backgroundImage = `url(${JSON.stringify(sample.image)})`;
+  pad.append(el('span', 'art-phone-key back'), el('span', 'art-phone-key'));
+  phone.append(screen, pad);
+  mat.append(phone);
+  return mat;
+}
+
 // The how-it-works line demonstrates the pipeline on a sample, in green demonstration carriages behind the engine,
-// arrowed one to the next: the picture, Gemini's outlines, its cut-outs standing up, then a rider standing in it.
+// arrowed one to the next: the picture, Gemini's outlines, its cut-outs standing up, then the view from a phone in it.
 function ghostSteps(sample) {
   return STEPS.map((text, k) => {
     const li = el('li', 'art-slot'), car = el('div', 'art-card art-demo');
     li.setAttribute('aria-hidden', 'true');
     car.append(el('span', 'art-ghost-n', String(k + 1)));
-    if (sample && sample.image) {
+    if (sample && sample.image && k === 3) car.append(phoneEl(sample));
+    else if (sample && sample.image) {
       const { mat, plate } = printEl(sample);
       car.append(mat);
       if (k === 1) sceneFor(sample).then((scene) => outline(plate, peekLayers(scene)));
-      if (k >= 2) { mat.classList.add('selected'); peek(mat, sample); }
-      if (k === 3) plate.append(el('span', 'art-rider'));
+      if (k === 2) { mat.classList.add('selected'); peek(mat, sample); }
     }
     car.append(el('span', 'art-ghost-text', text));
     li.append(car);
