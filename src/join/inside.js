@@ -7,6 +7,7 @@ import { buildDiorama } from '../world/diorama.js';
 import { walkSign } from '../world/tip.js';
 import { sheetTexture, setFrame, textSprite, shadowTexture, ASPECT, WALK, IDLE } from '../host/figures.js';
 import { MIN_T } from '../shared/protocol.js';
+import { isLineArt } from '../shared/lineart.js';
 import './inside.css';
 
 const MAX_TEX = 2048, MAX_DPR = 1.5;
@@ -37,6 +38,10 @@ const okUrl = (u) => typeof u === 'string' && u.length <= 2048 && /^(https?:\/\/
 const okDepthUrl = (u) => typeof u === 'string' && u.length <= 300 && /^(https:\/\/\S+|\/(?![/\\])\S*)$/.test(u);
 const okColor = (c) => (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : tok('--cream'));
 const DEPTH_PX = 512, DEPTH_MS = 8000; // the depth picture's long side at most; a slow one is not waited for longer
+const LINE_PX = 256; // the drawing check reads a nearest-sampled 256 x 256 copy of the picture (thin ink stays ink)
+const FOLLOW_S = 0.8, FOLLOW_MS = 2500; // the view turns to a stop in this long, unless you looked round yourself this recently
+const FLOOR_PITCH = 25 * Math.PI / 180; // a stop's river or path is seen ahead on the ground, not straight down at your feet
+const FOOT_VIEW = 0.4; // a standing stop's foot stays within this share of the view's height below its middle
 
 function loadImage(url) {
   return new Promise((ok, fail) => {
@@ -58,7 +63,22 @@ function imageTexture(img, max, aniso) {
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = Math.min(16, aniso); // the floor is seen at a grazing angle
   tex.wrapS = tex.wrapT = THREE.MirroredRepeatWrapping; // past the frame the diorama continues the painting mirrored
-  return { tex, aspect };
+  return { tex, aspect, lineArt: lineArtOf(c) };
+}
+// Whether the picture is a drawing (ink on blank paper: depth estimation reads only noise in it); false when unreadable.
+function lineArtOf(c) {
+  const s = document.createElement('canvas');
+  try {
+    s.width = s.height = LINE_PX;
+    const sctx = s.getContext('2d');
+    sctx.imageSmoothingEnabled = false; // point samples, as isLineArt's own grid takes them: no greyed lines
+    sctx.drawImage(c, 0, 0, LINE_PX, LINE_PX);
+    return isLineArt(sctx.getImageData(0, 0, LINE_PX, LINE_PX).data, LINE_PX, LINE_PX) === true;
+  } catch (e) {
+    return false;
+  } finally {
+    s.width = s.height = 0;
+  }
 }
 // The scene's depth picture as {data, w, h} (one byte per pixel from its red channel, rows top first), or null when
 // there is none, it fails, it is slow, or the canvas will not read it back (a cross-origin PNG without CORS).
@@ -139,6 +159,10 @@ export function open(ctx) {
   // heading: the way the camera faces along the path (+1 toward increasing t), apart from the figure's own facing,
   // so standing still you can turn round; Walk walks that way. null until the first pos after a world is built.
   let heading = null, endShown = false, lookedAt = -Infinity;
+  // The view follows the stop: nearLabel is the last pos's near; stop the label the view turns to (reached with no look
+  // round of your own for FOLLOW_MS), null once left or let go; fol the turn under way, {on, label, t0, y0, p0} (on:
+  // toward the stop, else back to the walking way), null while the look is the player's own.
+  let nearLabel = null, stop = null, fol = null, movedAt = -Infinity;
   const me = { t: 0.16, shown: 0.16, facing: 1, seen: false };
   const dir = () => (heading === null ? me.facing : heading);
   const others = new Map(); // pid -> a paper figure
@@ -154,9 +178,12 @@ export function open(ctx) {
     hint.textContent = text;
     hint.classList.remove('gone'); clearTimeout(hintT); hintT = setTimeout(() => hint.classList.add('gone'), ms);
   }
+  // The player takes the look (a drag, a tilt, Turn): the view stops following until the next stop, from where it is.
+  function letGo() { stop = null; fol = null; }
   // Looking around (a drag that moved, a tilt that turned) keeps the seat from the idle kick, at most once per LOOK_MS.
   function looked() {
     const now = performance.now();
+    movedAt = now; letGo();
     if (now - lookedAt >= LOOK_MS && ctx.look()) lookedAt = now;
   }
 
@@ -202,16 +229,16 @@ export function open(ctx) {
       return say(typeof m.reason === 'string' && m.reason ? m.reason.slice(0, 120) : 'This picture can’t be entered yet', UNTIL, true);
     }
     if (!richer) say(BUILDING, 'Folding the picture into a little stage.', false);
-    let tex = richer ? world.tex : null, aspect = richer ? world.aspect : 0, loaded = [];
+    let tex = richer ? world.tex : null, aspect = richer ? world.aspect : 0, lineArt = richer ? world.lineArt : false, loaded = [];
     const picture = richer ? null : loadImage(m.image).then(null, () => { throw new Error('image'); });
     Promise.all([picture, loadDepth(m.scene.depth_url)]) // the card waits for both; a depth that fails is just null
       .then((got) => {
         if (gen !== seq) return null;
         if (!richer) {
           const t = imageTexture(got[0], Math.min(MAX_TEX, renderer.capabilities.maxTextureSize), renderer.capabilities.getMaxAnisotropy());
-          tex = t.tex; aspect = t.aspect;
+          tex = t.tex; aspect = t.aspect; lineArt = t.lineArt;
         }
-        return buildDiorama(m.scene, tex, { aspect, depth: got[1] }); // it validates the scene itself
+        return buildDiorama(m.scene, tex, { aspect, depth: got[1], lineArt }); // it validates the scene itself; a drawing gets no depth room
       })
       .then((d) => (d ? Promise.resolve(d.ready).then((ids) => { loaded = ids; return d; }) : null)) // its 3D models load, or fall back to flats, first
       .then((d) => {
@@ -219,7 +246,7 @@ export function open(ctx) {
         if (gen !== seq) { d.dispose(); if (!richer) tex.dispose(); return; }
         const was = world;
         if (richer) { scene.remove(was.d.group); try { was.d.dispose(); } catch (e) {} } // its texture is the new world's
-        world = { d, tex, aspect, scene: m.scene, image: m.image };
+        world = { d, tex, aspect, lineArt, scene: m.scene, image: m.image };
         scene.add(d.group);
         const box = new THREE.Box3().setFromObject(d.group), r = box.isEmpty() ? 100 : box.getSize(new THREE.Vector3()).length();
         camera.near = Math.max(0.001, d.eyeHeight * 0.02); camera.far = Math.max(camera.near * 100, r * 3);
@@ -229,7 +256,8 @@ export function open(ctx) {
           if (line) hintSay(line, 5000);
           return;
         }
-        born = performance.now(); yaw = null; heading = null;
+        born = performance.now(); yaw = null; heading = null; fol = null; // a new world: its own walking way, level, no stop
+        dragYaw = 0; pitch = 0; stop = null; nearLabel = null;
         card.hidden = true;
         hintSay('Drag to look around', 6000);
       })
@@ -275,6 +303,7 @@ export function open(ctx) {
     sprite.center.set(0.5, 0);
     const tag = textSprite(String(o.name || '').slice(0, 40), { bg: tok('--ink'), fg: tok('--cream'), dot: color, alpha: 0.85 });
     tag.renderOrder = 10; tag.material.sizeAttenuation = false;
+    tag.material.depthTest = true; // a figure hidden behind a cut-out hides its name too
     const shadow = new THREE.Mesh(shadowGeo, shadowMat);
     scene.add(shadow, sprite, tag);
     // everyone walks the one path line, so the others keep to a side of it rather than walk through your eyes
@@ -292,6 +321,8 @@ export function open(ctx) {
       if (world && heading === null) heading = me.facing;
       endCheck();
     }
+    const near = typeof m.near === 'string' && m.near !== '' ? m.near : null;
+    if (near !== nearLabel) { nearLabel = near; stop = near !== null && performance.now() - movedAt >= FOLLOW_MS ? near : null; }
     setNear(m.near);
     if (!Array.isArray(m.others)) return;
     const seen = {};
@@ -314,6 +345,50 @@ export function open(ctx) {
     if (tilt && tilt.q) return qOut.setFromAxisAngle(Y, base + dragYaw - tilt.yaw0).multiply(tilt.q);
     return qOut.setFromEuler(euler.set(pitch, base + dragYaw, 0, 'YXZ'));
   }
+  // Where the stop `label` is to be looked at (the diorama's lookAt: a flat's or model's centre, a backdrop's spot on
+  // the wall; else its position) into goal, and that object into goalOf; of two objects with one label, the nearer.
+  // false when none has it.
+  const goal = new THREE.Vector3(), cand = new THREE.Vector3();
+  let goalOf = null;
+  function stopPoint(d, label) {
+    let best = Infinity;
+    (Array.isArray(d.objects) ? d.objects : []).forEach((o) => {
+      const p = o && typeof o.label === 'string' && o.label.trim() === label.trim() ? o.lookAt || o.position : null;
+      if (!p) return;
+      const dd = xyz(p, cand).distanceToSquared(eye);
+      if (dd < best) { best = dd; goal.copy(cand); goalOf = o; }
+    });
+    return best < Infinity;
+  }
+  // The view follows the stop: standing at one (Walk not held), the look eases over FOLLOW_S to it and holds there; on
+  // leaving it, or on Walk, back to the walking way, and the look is the player's own again. It turns the drag's yaw
+  // and pitch (with tilt on, the yaw only: the phone keeps its own pitch), so a drag carries on from it (walkSign skips
+  // it: see frame). Something lying on the floor is looked at no steeper than FLOOR_PITCH down; a standing one keeps
+  // its foot in view. Flats hiding the stop's object fade while the view holds on it (the diorama's focus). Run after
+  // yaw is eased and eye placed.
+  function follow(d, now) {
+    const on = stop !== null && curLx === 0 && stopPoint(d, stop);
+    if (typeof d.focus === 'function') d.focus(on ? goal : null);
+    if (!fol && !on) return;
+    const tilted = !!(tilt && tilt.q), ty = tilted ? euler.setFromQuaternion(tilt.q, 'YXZ').y - tilt.yaw0 : 0; // the phone's own turn
+    const label = on ? stop : null;
+    if (!fol || fol.label !== label) fol = { on, label, t0: now, y0: yaw + dragYaw + ty, p0: pitch };
+    let toY = yaw, toP = 0;
+    if (on) {
+      cand.copy(goal).sub(eye);
+      const across = Math.hypot(cand.x, cand.z);
+      toY = across > 1e-6 ? Math.atan2(-cand.x, -cand.z) : fol.y0;
+      toP = clamp(Math.atan2(cand.y, across), goalOf.part === 'floor' ? -FLOOR_PITCH : -PITCH_MAX, PITCH_MAX);
+      if (goalOf.part === 'stand' && goalOf.position) { // the foot no lower than FOOT_VIEW of the way down the view
+        xyz(goalOf.position, cand).sub(eye);
+        toP = Math.max(-PITCH_MAX, Math.min(toP, Math.atan2(cand.y, Math.hypot(cand.x, cand.z)) + FOOT_VIEW * fpFov * Math.PI / 180));
+      }
+    }
+    const s = reduced.matches ? 1 : smooth((now - fol.t0) / 1000 / FOLLOW_S);
+    dragYaw = wrap(fol.y0 + wrap(toY - fol.y0) * s - yaw - ty);
+    if (!tilted) pitch = fol.p0 + (toP - fol.p0) * s;
+    if (!on && s >= 1) fol = null; // back on the walking way
+  }
   function frame(now) {
     raf = requestAnimationFrame(frame);
     const dt = clamp((now - last) / 1000, 0, 0.1);
@@ -326,7 +401,9 @@ export function open(ctx) {
     let aim = Math.atan2(-f0.x * dir(), -f0.z * dir());
     // Walk goes the path way nearer the look: the full look at the path aim (not the eased yaw, so a turn's swing never
     // flips it back). A flip re-expresses the drag (and the eased yaw) against the new aim: the view does not move.
-    if (heading !== null) {
+    // Only the player's own look flips it: while the view follows a stop (fol), Walk carries on the way it came, however
+    // far round the stop's object turned the view.
+    if (heading !== null && !fol) {
       ahead.set(0, 0, -1).applyQuaternion(aimLook(look, aim));
       const s = walkSign(ahead.x, ahead.z, f0.x, f0.z, heading, FLIP_DEG);
       if (s !== heading) {
@@ -337,6 +414,7 @@ export function open(ctx) {
     }
     yaw = yaw === null ? aim : yaw + wrap(aim - yaw) * (1 - Math.exp(-dt * 5)); // turning round is a turn, not a cut
     xyz(p.position, eye).y += d.eyeHeight;
+    follow(d, now);
     aimLook(look, yaw);
     const g = reduced.matches ? 1 : smooth(((now - born) / 1000 - HOLD_S) / GLIDE_S);
     let fov = fpFov;
@@ -356,6 +434,8 @@ export function open(ctx) {
       f.shown += step; f.phase += Math.abs(step) * WALK_RATE;
       const fp = d.pathAt(f.shown), fw = xyz(fp.forward, fwd), pos = xyz(fp.position, at);
       pos.x += fw.z * f.lane * d.eyeHeight; pos.z -= fw.x * f.lane * d.eyeHeight;
+      const gy = typeof d.groundAt === 'function' ? d.groundAt(pos.x, pos.z) : NaN;
+      if (fin(gy)) pos.y = gy; // on the ground under its feet beside the path (the relief's own height), else the path's
       f.sprite.visible = f.tag.visible = f.shadow.visible = Math.hypot(pos.x - eye.x, pos.z - eye.z) > d.eyeHeight * 0.4; // not in your face
       f.sprite.position.copy(pos); f.sprite.scale.set(h * ASPECT, h, 1);
       f.shadow.position.copy(pos); f.shadow.position.y += h * 0.01; f.shadow.scale.set(h * 0.55, 1, h * 0.2);
@@ -387,7 +467,7 @@ export function open(ctx) {
     ctx.setLx(on ? dir() : 0);
   }
   function turn() {
-    heading = -dir(); endShown = false;
+    heading = -dir(); endShown = false; letGo(); // a stop's held look would keep the view from turning round
     if (curLx !== 0) ctx.setLx(heading); // Walk held: keep walking, the other way
   }
   hold(walkBtn, () => walk(true), () => walk(false));
@@ -434,6 +514,7 @@ export function open(ctx) {
   }
   function setTilt(on) {
     tilt = on ? { q: null, yaw0: 0, ref: null } : null;
+    letGo();
     tiltBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
     clearTimeout(tiltT);
     removeEventListener('deviceorientation', onOri);

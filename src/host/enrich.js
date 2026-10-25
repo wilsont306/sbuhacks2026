@@ -3,19 +3,22 @@
 // one in this browser from its picture (src/host/depthAI.js, a lazy chunk). The relief takes it (game.setDepth), and a
 // saved project's image goes to POST /api/depth, whose URL lands on the scene (game.setSceneField) so inside phones get
 // it with the world. A generation guard drops any result for a scene that has since left; every failure is quiet and
-// keeps the mask relief. glue.js calls init({game, token, margins}) once; the HUD reads stats().
+// keeps the mask relief. A drawing (ink on blank paper, src/shared/lineart.js) gets no depth at all: Depth Anything reads
+// one as noise, so it keeps the mask relief too. glue.js calls init({game, token, margins}) once; the HUD reads stats().
 import { apiHeaders } from '../shared/byok.js';
+import { isLineArt } from '../shared/lineart.js';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/; // api/depth.js's id rule
 const DEPTH_MAX = 512; // D1's long side
+const LINE_MAX = 256; // the picture's long side for isLineArt: at most 64k pixels
 const UPLOAD_MS = 15000;
 
 let game = null, token = '', margins = null, gen = 0, ai = null;
 const hooks = new Set();
 const st = { state: 'idle', device: null, ms: 0 };
 
-// -> {state: 'idle'|'loading'|'computing'|'ready'|'saved'|'failed', device, ms}. 'loading' covers the model's first
-// download, which runs inside the estimate.
+// -> {state: 'idle'|'loading'|'computing'|'ready'|'saved'|'failed'|'drawing', device, ms}. 'loading' covers the model's
+// first download, which runs inside the estimate; 'drawing': the picture is line art, so no depth was loaded or made.
 export function stats() {
   const loading = st.state === 'computing' && ai && ai.stats().progress < 100;
   return { ...st, state: loading ? 'loading' : st.state };
@@ -48,16 +51,30 @@ function loadImage(url) {
   });
 }
 
-// A depth image file (8-bit, R=G=B, 255 nearest) as {data, w, h}, at most DEPTH_MAX on the long side.
-async function fileDepth(url) {
-  const img = await loadImage(url), nw = img.naturalWidth, nh = img.naturalHeight, s = Math.min(1, DEPTH_MAX / Math.max(nw, nh));
+// An image's RGBA pixels as {data, w, h}, at most max on the long side.
+function pixels(img, max) {
+  const nw = img.naturalWidth || max, nh = img.naturalHeight || max, s = Math.min(1, max / Math.max(nw, nh));
   const w = Math.max(2, Math.round(nw * s)), h = Math.max(2, Math.round(nh * s)), c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d');
   g.drawImage(img, 0, 0, w, h);
-  const px = g.getImageData(0, 0, w, h).data, data = new Uint8Array(w * h);
+  return { data: g.getImageData(0, 0, w, h).data, w, h };
+}
+
+// A depth image file (8-bit, R=G=B, 255 nearest) as {data, w, h}, at most DEPTH_MAX on the long side.
+async function fileDepth(url) {
+  const { data: px, w, h } = pixels(await loadImage(url), DEPTH_MAX), data = new Uint8Array(w * h);
   for (let k = 0; k < data.length; k++) data[k] = px[k * 4];
   return { data, w, h };
+}
+
+// Whether the scene's picture is a drawing; false when it has none or it will not load or read.
+async function isDrawing(scene) {
+  if (!scene.image_url) return false;
+  try {
+    const { data, w, h } = pixels(await loadImage(scene.image_url), LINE_MAX);
+    return isLineArt(data, w, h);
+  } catch { return false; }
 }
 
 const base64 = (blob) => new Promise((ok, no) => {
@@ -80,6 +97,10 @@ async function upload(id, png) {
 
 async function depthFor(scene, isCurrent) {
   const t0 = performance.now();
+  set('loading');
+  const drawing = await isDrawing(scene);
+  if (!isCurrent()) return;
+  if (drawing) return set('drawing', null, since(t0)); // no setDepth and no upload, even for a stored depth_url
   if (scene.depth_url) {
     set('loading');
     const d = await fileDepth(scene.depth_url).catch(() => null);

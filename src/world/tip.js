@@ -149,6 +149,136 @@ export function walkSign(lookX, lookZ, tanX, tanZ, current, hysteresisDeg) {
   return c >= 0 ? 1 : -1;
 }
 
+// ---- Standing objects among the walk (diorama.js): where each stands, which way a flat turns, where to look ----
+const FAR_SHARE = 0.7;   // nothing stands farther than this share of the back wall's distance...
+const PATH_GAP = 1.2;    // ...or nearer the walk than this many eye heights...
+const NEAR_SHARE = 0.5;  // ...or nearer the painting camera than this share of the floor at the picture's foot
+const SLIDE = 0.01, SLIDES = 240; // a slide tries scales k0 * e^(+-n SLIDE), n up to SLIDES, the smallest move first
+const TURN_IN = 0.5;     // flats turn fully to the eye once it is this share of nearDist from the painting camera
+
+// The horizontal distance from (x, z) to the walk, a polyline of world points [x, y, z]; Infinity with no points.
+export function pathGap(path, x, z) {
+  const pts = Array.isArray(path) ? path : [];
+  let best = Infinity;
+  for (let k = 0; k < pts.length; k++) {
+    const a = pts[k], b = pts[Math.min(pts.length - 1, k + 1)], dx = b[0] - a[0], dz = b[2] - a[2], len = dx * dx + dz * dz;
+    const s = len > 0 ? clamp(((x - a[0]) * dx + (z - a[2]) * dz) / len, 0, 1) : 0;
+    best = Math.min(best, Math.hypot(x - a[0] - s * dx, z - a[2] - s * dz));
+  }
+  return best;
+}
+
+// How a standing object at foot [x, y, z] slides to stand sanely by the walk (path, as pathGap's): its foot's x and z
+// times k, along its bearing from the painting camera (so it keeps its column in the picture), with k also its scale
+// (so its size seen from the painting camera is kept). k is the smallest move at which it stands no farther than
+// FAR_SHARE of the back wall's distance, no nearer than NEAR_SHARE of nearDist, and PATH_GAP eye heights plus k *
+// radius (a model's footprint; 0 for a flat, which turns to face the walker so never comes nearer than its foot) from
+// the walk; 1 when it already does; the nearest to 1 within the room's limits when no k clears the walk.
+export function slideScale(cam, foot, path, radius) {
+  const D = Array.isArray(foot) ? -foot[2] : NaN, r = fin(radius) ? Math.max(0, radius) : 0;
+  if (!(D > 0) || !fin(D) || !fin(foot[0])) return 1;
+  const hi = FAR_SHARE * cam.farDist / D, lo = Math.min(hi, NEAR_SHARE * cam.nearDist / D), k0 = clamp(1, lo, hi);
+  for (let n = 0; n <= 2 * SLIDES; n++) {
+    const k = k0 * Math.exp((n % 2 ? 1 : -1) * Math.ceil(n / 2) * SLIDE); // k0, then a step farther, a step nearer, ...
+    if (k >= lo && k <= hi && pathGap(path, k * foot[0], k * foot[2]) >= PATH_GAP * cam.eye + k * r) return k;
+  }
+  return k0;
+}
+
+// How far a flat has turned to the eye (0..1): none at the painting camera, all of the way once the eye is TURN_IN of
+// nearDist from it (a smoothstep), so from that camera every flat faces the picture plane and the view is the picture.
+// The contact shadows fade in with it.
+export function turnWeight(cam, eye) {
+  if (!Array.isArray(eye) || !eye.every(fin)) return 0;
+  const t = clamp(Math.hypot(eye[0] - cam.position[0], eye[1] - cam.position[1], eye[2] - cam.position[2]) / (TURN_IN * cam.nearDist), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+// The yaw (radians about +y; 0 faces +z, the picture plane) a standing flat at foot turns to for the eye: toward it
+// about its vertical axis, by turnWeight. cap (turnCap), when given, bounds how far its plane swings from the picture
+// plane either way (either face may show: a flat is two-sided).
+export function turnYaw(cam, foot, eye, cap) {
+  const w = turnWeight(cam, eye), y = w ? w * Math.atan2(eye[0] - foot[0], eye[2] - foot[2]) : 0;
+  if (!fin(cap) || !(cap < Math.PI / 2)) return y;
+  const l = y - Math.PI * Math.round(y / Math.PI); // the plane's swing, -PI/2..PI/2
+  return y - l + clamp(l, -Math.max(0, cap), Math.max(0, cap));
+}
+
+// How far (radians) a flat half wide (half its scaled width) standing at foot may swing from the picture plane before
+// an edge could come within TURN_CLEAR eye heights of the walk (path, as pathGap's): a wide flat beside the walk turned
+// to the eye would otherwise lie across the walk ahead. PI when it cannot reach.
+const TURN_CLEAR = 0.5;
+export function turnCap(cam, path, foot, half) {
+  const g = Array.isArray(foot) ? pathGap(path, foot[0], foot[2]) - TURN_CLEAR * cam.eye : NaN;
+  if (!fin(g) || !(half > 0)) return Math.PI;
+  return half > g ? Math.asin(Math.max(0, g) / half) : Math.PI;
+}
+
+// Whether a standing flat (flatOf's {left, right, height}) at foot, turned by yaw and scaled by k, hides point from the
+// eye: the segment between them passes through it, short of point (a point on the flat itself is not hidden by it).
+export function hides(flat, foot, yaw, k, eye, point) {
+  if (!flat || !(k > 0) || ![foot, eye, point].every((p) => Array.isArray(p) && p.every(fin)) || !fin(yaw)) return false;
+  const s = Math.sin(yaw), c = Math.cos(yaw), d = [point[0] - eye[0], point[1] - eye[1], point[2] - eye[2]];
+  const den = s * d[0] + c * d[2], t = (s * (foot[0] - eye[0]) + c * (foot[2] - eye[2])) / den; // along the segment to the flat's plane
+  if (!(Math.abs(den) > 1e-9) || !(t > 1e-3 && t < 0.98)) return false;
+  const x = ((eye[0] + t * d[0] - foot[0]) * c - (eye[2] + t * d[2] - foot[2]) * s) / k, y = (eye[1] + t * d[1] - foot[1]) / k;
+  return x >= flat.left && x <= flat.right && y >= 0 && y <= flat.height;
+}
+
+// A wide standing object whose top edge the walk runs along (Gemini puts the path on a bridge's deck): at least DECK_W
+// across, with every path point over its columns (path: [u, v] texture UV, as maskDepth.pathPoints) within DECK_TOL of
+// its height from its top edge, and at least two of them. diorama.js lays it on the floor, painted where it is under
+// the walk and whatever rides on it, rather than stand it up as a flat at its foot's distance, far from both.
+const DECK_W = 600, DECK_TOL = 0.15;
+export function isDeck(o, path) {
+  if (!isObj(o) || !okBox(o.box) || o.box[2] - o.box[0] < DECK_W) return false;
+  const tol = DECK_TOL * (o.box[3] - o.box[1]);
+  let n = 0;
+  for (const p of Array.isArray(path) ? path : []) {
+    if (!Array.isArray(p) || !fin(p[0]) || !fin(p[1])) continue;
+    const x = p[0] * 1000, y = (1 - p[1]) * 1000;
+    if (x < o.box[0] || x > o.box[2]) continue;
+    if (Math.abs(y - o.box[1]) > tol) return false;
+    n++;
+  }
+  return n >= 2;
+}
+
+// Where the view looks to face object o (inside.js turns to it at its stop): a standing object's centre (stand: {foot,
+// height, scale}, its flat's height before scaling); a backdrop object's box centre on the back wall; anything else
+// the room's surface seen at its box centre: the relief with a fit and its (filled) depth, else the floor, or the
+// wall where the floor has ended.
+export function lookPoint(cam, o, stand, fit, depth) {
+  if (stand) return [stand.foot[0], stand.foot[1] + stand.scale * stand.height / 2, stand.foot[2]];
+  const cx = (o.box[0] + o.box[2]) / 2, cy = (o.box[1] + o.box[3]) / 2;
+  const wall = planePoint(cam, cx, cy, cam.farDist) || [0, cam.eye, -cam.farDist];
+  if (BACKDROP.indexOf(o.kind) >= 0) return wall;
+  if (fit && okDepth(depth)) return planePoint(cam, cx, cy, distanceAt(fit, sampleDepth(depth, cx, cy))) || wall;
+  return cy > cam.wallRow ? imageToFloor(cam, cx, cy) : wall;
+}
+
+// The ground's height at world (x, z): 0 on the plain floor (no fit); in the depth room, where the vertical line there
+// meets the relief, its terrain read from the (filled) depth: up that line's image from the picture's foot to the first
+// point whose relief is as far as the line, between the two rows either side. A line nearer than the relief at the
+// picture's foot takes the relief's height there; one beyond all of it, 0.
+export function groundHeight(cam, fit, depth, x, z) {
+  const D = -z;
+  if (!fit || !okDepth(depth) || !fin(x) || !(D > 0) || !fin(D)) return 0;
+  const p0 = project(cam, [x, 0, z]), p1 = project(cam, [x, cam.eye, z]);
+  if (!p0 || !p1 || !(Math.abs(p1[1] - p0[1]) > 1e-9)) return 0;
+  const colAt = (y) => clamp(p0[0] + (y - p0[1]) * (p1[0] - p0[0]) / (p1[1] - p0[1]), 0, 1000);
+  const distAt = (y) => distanceAt(fit, sampleDepth(depth, colAt(y), y));
+  const step = 1000 / depth.h, heightAt = (y, d) => { const q = planePoint(cam, colAt(y), y, d); return q ? q[1] : 0; };
+  let y0 = 1000, d0 = distAt(y0);
+  if (d0 >= D) return heightAt(y0, d0);
+  for (let y = 1000 - step; y >= 0; y -= step) {
+    const d = distAt(y);
+    if (d >= D) return heightAt(y0 + (y - y0) * (D - d0) / (d - d0), D);
+    y0 = y; d0 = d;
+  }
+  return 0;
+}
+
 // ---- The depth room (README, Inside view): the same room re-shaped by a depth picture ----
 // depth (D1): {data: Uint8Array, one byte per pixel, rows top first, w, h}, 255 nearest, Depth Anything V2's relative
 // inverse depth min-max normalised over the picture. On the floor inverse depth is affine in that value, so a line
@@ -168,9 +298,16 @@ export function okDepth(d) {
   return isObj(d) && isInt(d.w) && isInt(d.h) && d.w >= 2 && d.h >= 2 && d.w <= 4096 && d.h <= 4096 && !!d.data && d.data.length === d.w * d.h;
 }
 
-// An object's outline in image space: its mask, else its box.
+// An object's outline in image space: its mask, else its box. A mask over less than MASK_SHARE of its box outlines a
+// part, not the object (Gemini outlined only a sketched train's roof, 2% of its box, and the rest of the train stayed
+// painted far off on the floor), so its box stands in for it too.
+const MASK_SHARE = 0.1;
 export function shapeOf(o) {
-  return Array.isArray(o.mask) && o.mask.length >= 3 ? o.mask : [[o.box[0], o.box[1]], [o.box[2], o.box[1]], [o.box[2], o.box[3]], [o.box[0], o.box[3]]];
+  const b = o.box, box = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], m = o.mask;
+  if (!Array.isArray(m) || m.length < 3 || !m.every(Array.isArray)) return box;
+  let a = 0;
+  for (let k = 0; k < m.length; k++) { const p = m[k], q = m[(k + 1) % m.length]; a += p[0] * q[1] - q[0] * p[1]; }
+  return Math.abs(a) / 2 >= MASK_SHARE * (b[2] - b[0]) * (b[3] - b[1]) ? m : box;
 }
 
 // fn(row, i0, i1) for each run of pixels [i0, i1) of a w by h picture whose centres lie inside the outline (even-odd,

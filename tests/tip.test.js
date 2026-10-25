@@ -5,12 +5,25 @@ import { readFileSync } from 'node:fs';
 import {
   EYE, horizonRow, paintingCamera, rayAt, project, imageToFloor, rowDistance, planePoint, uvToFloor, uvToImage, padBox, flatOf, extentOf,
   fitDepth, distanceAt, fillDepth, flatDistance, reliefGrid, terrainPath, sampleDepth, shapeOf, walkSign, pushPull,
+  pathGap, slideScale, turnWeight, turnYaw, turnCap, hides, isDeck, lookPoint, groundHeight, BACKDROP, FLOOR_KINDS,
 } from '../src/world/tip.js';
 import { validateScene } from '../src/shared/scene-validate.js';
 import { pathPoints } from '../src/host/maskDepth.js';
 
 const sample = (f) => validateScene(JSON.parse(readFileSync(new URL(`../public/samples/${f}`, import.meta.url), 'utf8')));
-const TURNER = sample('turner.scene.json'), SKETCH = sample('sketch.scene.json');
+const TURNER = sample('turner.scene.json'), SKETCH = sample('sketch.scene.json'), STARRY = sample('starry-night.scene.json');
+// Gemini's real reading of a printed sketch, "Steam Train on the Bridge" (1024 x 791; descriptions left out): the
+// train's foot is on the bridge deck, which sets the horizon, the walk runs along that deck, and the train's mask
+// outlines only its roof.
+const TRAIN = validateScene({
+  ground_path: [[0, 680], [500, 680], [1000, 680]],
+  objects: [
+    { label: 'train', kind: 'vehicle', box: [321, 419, 687, 674], mask: [[339, 419], [358, 432], [394, 439], [431, 438], [467, 434], [486, 429], [467, 424], [431, 422], [394, 420], [358, 419]] },
+    { label: 'bridge and river', kind: 'building', box: [40, 672, 960, 937], mask: [[40, 675], [960, 675], [960, 934], [40, 934]] },
+    { label: 'tree on hill', kind: 'plant', box: [715, 263, 959, 671] }, { label: 'sun', kind: 'celestial', box: [52, 66, 203, 255] },
+    { label: 'cloud', kind: 'cloud', box: [427, 91, 663, 219] },
+  ],
+});
 const close = (a, b, eps, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg}: ${a} vs ${b}`);
 const obj = (kind, box) => ({ kind, box, label: kind, mask: null, depth: 0.5, motion: 'none' });
 
@@ -452,4 +465,209 @@ test('pushPull strokes carry the brushwork beside a gap into it, on the colours 
   const g = new Uint8ClampedArray(8 * 8 * 4).fill(200), gh = new Uint8Array(64);
   gh.fill(1, 0, 8);
   for (const s of [NaN, -1, 5, 'x', undefined]) assert.equal(pushPull(g.slice(), 8, 8, gh, s), true);
+});
+
+test('shapeOf: the mask, else the box, and the box for a mask that outlines only a sliver of it', () => {
+  const box = [100, 100, 300, 200], rect = [[100, 100], [300, 100], [300, 200], [100, 200]];
+  const tri = [[100, 100], [300, 100], [200, 200]];
+  assert.deepEqual(shapeOf({ box, mask: tri }), tri, 'half the box');
+  assert.deepEqual(shapeOf({ box, mask: null }), rect);
+  assert.deepEqual(shapeOf({ box, mask: [[100, 100], [300, 100], [300, 105]] }), rect, '2.5% of the box: a part, not the object');
+  assert.deepEqual(shapeOf({ box, mask: [[100, 100], [300, 100]] }), rect, 'two points');
+  assert.deepEqual(shapeOf({ box, mask: [null, 1, 'x'] }), rect, 'garbage');
+  const train = TRAIN.objects[0];
+  assert.ok(train.mask && train.mask.length === 10, 'the saved train\'s roof outline passed validation');
+  assert.deepEqual(shapeOf(train), [[321, 419], [687, 419], [687, 674], [321, 674]], 'its whole box stands');
+  for (const o of [...TURNER.objects, ...SKETCH.objects, ...STARRY.objects]) if (o.mask) assert.equal(shapeOf(o), o.mask, `${o.label} keeps its mask`);
+});
+
+// ---- standing objects among the walk ----
+// The walk as the diorama samples it (here linearly, 16 steps between the TV's 8 path points), on the plain floor.
+function walkOf(scene, cam) {
+  const pp = pathPoints(scene, () => 0, 8), uvs = [];
+  for (let k = 0; k + 1 < pp.length; k++) for (let s = 0; s < 16; s++) uvs.push([pp[k][0] + (pp[k + 1][0] - pp[k][0]) * s / 16, pp[k][1] + (pp[k + 1][1] - pp[k][1]) * s / 16]);
+  uvs.push(pp[pp.length - 1]);
+  return terrainPath(cam, null, null, uvs);
+}
+
+test('pathGap: the horizontal distance to the walk\'s polyline', () => {
+  const path = [[0, 5, 0], [10, 0, 0], [10, 0, -10]];
+  close(pathGap(path, 5, 3), 3, 1e-12, 'beside the first leg (heights ignored)');
+  close(pathGap(path, 13, -4), 3, 1e-12, 'beside the second');
+  close(pathGap(path, -3, -4), 5, 1e-12, 'before its start: to the first point');
+  close(pathGap([[1, 0, 1]], 4, 5), 5, 1e-12, 'one point');
+  assert.equal(pathGap([], 0, 0), Infinity);
+  assert.equal(pathGap(null, 0, 0), Infinity);
+});
+
+test('slideScale: a flat on the walk slides the least way clear of it, keeping its side; one well placed stays', () => {
+  const cam = paintingCamera({}, 4 / 3), gap = 1.2 * cam.eye, D = 20, across = [[-50, 0, -D], [50, 0, -D]]; // a straight walk at 20 m
+  assert.equal(slideScale(cam, [3, 0, -D + 6], across), 1, 'clear: it stays');
+  const behind = slideScale(cam, [3, 0, -D - 0.5], across), front = slideScale(cam, [3, 0, -D + 0.5], across);
+  assert.ok(behind > 1 && front < 1, `behind the walk it goes farther, in front nearer (${behind}, ${front})`);
+  for (const [k, z] of [[behind, -D - 0.5], [front, -D + 0.5]]) {
+    const g = pathGap(across, 3 * k, z * k);
+    assert.ok(g >= gap && g < gap + 0.25, `just clear: ${g}`);
+  }
+  // a model, which does not turn: clear by its footprint's radius too, times its scale
+  const k = slideScale(cam, [0, 0, -D - 0.5], across, 2), g = pathGap(across, 0, -(D + 0.5) * k);
+  assert.ok(g >= gap + 2 * k && g < gap + 2 * k + 0.3, `clear by its footprint: ${g}`);
+  // nowhere clear (a walk zigzagging over every depth): it stays
+  const everywhere = [];
+  for (let z = 0; z < 120; z += 0.5) everywhere.push([-50, 0, -z], [50, 0, -z - 0.25]);
+  assert.equal(slideScale(cam, [0, 0, -D], everywhere), 1);
+  for (const bad of [null, 'x', [0, 0, 5], [0, 0, 0], [NaN, 0, -3], [0, 0, NaN]]) assert.equal(slideScale(cam, bad, across), 1, `${bad}`);
+  assert.equal(slideScale(cam, [0, 0, -D], []), 1, 'no walk: nothing to clear');
+});
+
+test('slideScale: nothing beyond 0.7 of the back wall or nearer than half the near floor; a slid flat keeps its size in the picture', () => {
+  const cam = paintingCamera({}, 4 / 3), D = 0.9 * cam.farDist;
+  close(slideScale(cam, [D * 0.2, 0, -D], []) * D, 0.7 * cam.farDist, 1e-9, 'brought to 0.7 of the wall');
+  close(slideScale(cam, [0, 0, -0.1], []) * 0.1, 0.5 * cam.nearDist, 1e-9, 'pushed out to half the near floor');
+  // standing on the floor at k times its distance, k times its size: the same rows tall and columns wide, in its column
+  const f = flatOf(cam, [400, 300, 520, 700]), kk = slideScale(cam, f.foot, [[-50, 0, f.foot[2]], [50, 0, f.foot[2]]]);
+  assert.ok(Math.abs(kk - 1) > 0.02, `it slid (${kk})`);
+  const at = (k) => [[f.left, 0], [f.right, 0], [f.left, f.height], [f.right, f.height]].map(([dx, y]) => project(cam, [k * (f.foot[0] + dx), k * y, k * f.foot[2]]));
+  const a = at(1), b = at(kk);
+  close(b[0][1] - b[2][1], a[0][1] - a[2][1], 0.01 * (a[0][1] - a[2][1]), 'rows tall');
+  close(b[1][0] - b[0][0], a[1][0] - a[0][0], 0.01 * (a[1][0] - a[0][0]), 'columns wide');
+  close((b[0][0] + b[1][0]) / 2, (a[0][0] + a[1][0]) / 2, 0.5, 'its column');
+});
+
+test('the samples and the saved steam train sketch: every flat stands within 0.7 of the wall and 1.2 eye heights clear of the walk', () => {
+  const slid = {};
+  for (const [name, scene, aspect] of [['Turner', TURNER, 1920 / 1433], ['sketch', SKETCH, 4 / 3], ['Starry Night', STARRY, 1920 / 1520], ['steam train', TRAIN, 1024 / 791]]) {
+    const cam = paintingCamera(scene, aspect), walk = walkOf(scene, cam);
+    for (const o of scene.objects) {
+      // as diorama.js stands it: covering its box with a 6-unit rim, at its own foot's distance
+      const f = BACKDROP.indexOf(o.kind) < 0 && FLOOR_KINDS.indexOf(o.kind) < 0 ? flatOf(cam, padBox(o.box, aspect, 6), rowDistance(cam, o.box[3])) : null;
+      if (!f) continue;
+      const k = slideScale(cam, f.foot, walk);
+      if (k !== 1) slid[`${name}: ${o.label}`] = +k.toFixed(2);
+      if (name === 'steam train' && o.label === 'train') assert.ok(-f.foot[2] > -walk[0][2] + 1.2 * EYE, 'the train stands behind the walk on its deck, as its wheels stand above the walk\'s row');
+      assert.ok(k * f.distance <= 0.7 * cam.farDist + 1e-9, `${name} ${o.label} within 0.7 of the wall`);
+      assert.ok(pathGap(walk, k * f.foot[0], k * f.foot[2]) >= 1.2 * EYE - 1e-9, `${name} ${o.label} clear of the walk`);
+    }
+  }
+  // standing at their own feet the train and the tree on the deck are clear of the walk along it; the boat and the
+  // spire stand on their walks
+  assert.deepEqual(Object.keys(slid).sort(), ['Starry Night: Church spire', 'Turner: Rowing boat']);
+  for (const k of Object.values(slid)) assert.ok(k > 0.9 && k < 1.2, `a small slide: ${k}`);
+});
+
+test('turnYaw: from the painting camera a flat faces the picture plane; away from it, the eye', () => {
+  const cam = paintingCamera(SKETCH, 4 / 3), foot = [4, 0, -12];
+  assert.equal(turnWeight(cam, cam.position), 0);
+  assert.equal(turnYaw(cam, foot, cam.position), 0, 'from the painting camera: as painted');
+  for (const eye of [[0, EYE, -20], [10, EYE, -12], [-6, EYE, -3], [4, EYE, -30], [4.0001, EYE, -12.5]]) {
+    const y = turnYaw(cam, foot, eye), to = [eye[0] - foot[0], eye[2] - foot[2]], len = Math.hypot(to[0], to[1]);
+    close((Math.sin(y) * to[0] + Math.cos(y) * to[1]) / len, 1, 1e-9, `${eye}: its face points at the eye`);
+  }
+  let last = 0; // eased in, smoothly, over the first half of the near floor's distance
+  for (let d = 0; d <= cam.nearDist; d += cam.nearDist / 40) {
+    const w = turnWeight(cam, [0, EYE, -d]);
+    assert.ok(w >= last && w <= 1, `${d}: ${w}`);
+    last = w;
+  }
+  assert.equal(turnWeight(cam, [0, EYE, -cam.nearDist / 2]), 1);
+  const early = turnWeight(cam, [0, EYE, -cam.nearDist / 8]);
+  assert.ok(early > 0 && early < 0.25, `${early}`);
+  assert.equal(turnWeight(cam, [NaN, 0, 0]), 0);
+  assert.equal(turnWeight(cam, null), 0);
+});
+
+test('lookPoint: a standing object\'s centre, a backdrop\'s spot on the back wall, else the surface seen at its box centre', () => {
+  const cam = paintingCamera(SKETCH, 4 / 3), mid = (o) => [(o.box[0] + o.box[2]) / 2, (o.box[1] + o.box[3]) / 2];
+  assert.deepEqual(lookPoint(cam, SKETCH.objects[2], { foot: [1, 0, -10], height: 4, scale: 1.5 }), [1, 3, -10], 'half its scaled height up');
+  for (const o of SKETCH.objects) {
+    const p = lookPoint(cam, o, null), q = project(cam, p), [cx, cy] = mid(o);
+    close(q[0], cx, 1e-6, `${o.label} column`); close(q[1], cy, 1e-6, `${o.label} row`);
+    if (BACKDROP.indexOf(o.kind) >= 0 || cy <= cam.wallRow) close(-p[2], cam.farDist, 1e-9, `${o.label} on the back wall`);
+    else assert.equal(p[1], 0, `${o.label} on the floor`);
+  }
+  // in the depth room, at the relief's distance; a backdrop stays on the back wall
+  const depth = tipDepth(cam, { objects: [] }, 128, 96, 0, 0), fit = fitDepth(cam, SKETCH, depth), river = SKETCH.objects[5], [cx, cy] = mid(river);
+  const p = lookPoint(cam, river, null, fit, depth), q = project(cam, p);
+  close(-p[2], distanceAt(fit, sampleDepth(depth, cx, cy)), 1e-9, 'the relief\'s distance');
+  close(q[0], cx, 1e-6, 'column'); close(q[1], cy, 1e-6, 'row');
+  close(-lookPoint(cam, SKETCH.objects[0], null, fit, depth)[2], cam.farDist, 1e-9, 'the sun on the wall');
+});
+
+test('groundHeight: 0 on the plain floor; in the depth room the relief\'s height under the point', () => {
+  const cam = paintingCamera(TURNER, 1920 / 1433);
+  for (const p of walkOf(TURNER, cam)) assert.equal(groundHeight(cam, null, null, p[0], p[2]), 0);
+  const flat = tipDepth(cam, { objects: [] }, 256, 191, 0, 0), fitted = fitDepth(cam, TURNER, flat);
+  for (const p of walkOf(TURNER, cam)) close(groundHeight(cam, fitted, flat, p[0], p[2]), 0, 0.15, `the floor at ${p}`);
+  // ground rising away at 1 in 10, read through a known fit: a tenth of the distance up
+  const slope = 0.1, w = 256, h = 384, data = new Uint8Array(w * h), fit = { a: A0, b: B0, r2: 1, near: cam.nearDist / 2, far: cam.farDist };
+  for (let j = 0; j < h; j++) {
+    const r = rayAt(cam, 500, (j + 0.5) / h * 1000), s = -cam.eye / (r[1] + slope * r[2]); // eye + s r.y = slope * (-s r.z)
+    data.fill(s > 0 ? byteOf(-s * r[2]) : 0, j * w, (j + 1) * w);
+  }
+  const slopeDepth = { data, w, h };
+  for (const D of [6, 9, 14, 20]) for (const x of [-2, 0, 3]) close(groundHeight(cam, fit, slopeDepth, x, -D), slope * D, 0.04 * D, `${x}, ${D} m`);
+  const lip = distanceAt(fit, sampleDepth(slopeDepth, 500, 1000));
+  close(groundHeight(cam, fit, slopeDepth, 0, -1), slope * lip, 0.1, 'nearer than the picture\'s foot: the relief\'s height there');
+  assert.equal(groundHeight(cam, fit, slopeDepth, 0, -(cam.farDist + 10)), 0, 'beyond all of it');
+  for (const [x, z] of [[NaN, -5], [0, 1], [0, 0], [0, NaN]]) assert.equal(groundHeight(cam, fit, slopeDepth, x, z), 0, `${x}, ${z}`);
+  assert.equal(groundHeight(cam, fit, { data: new Uint8Array(3), w: 2, h: 2 }, 0, -5), 0, 'an unusable depth');
+});
+
+test('turnCap: a wide flat beside the walk turns to the eye only so far that its edges stay clear of the walk', () => {
+  const cam = paintingCamera(TRAIN, 1024 / 791), walk = walkOf(TRAIN, cam), o = TRAIN.objects[0];
+  const f = flatOf(cam, padBox(o.box, 1024 / 791, 6), rowDistance(cam, o.box[3])), half = (f.right - f.left) / 2;
+  assert.equal(slideScale(cam, f.foot, walk), 1, 'the train stands where it was put');
+  const cap = turnCap(cam, walk, f.foot, half);
+  assert.ok(cap > 0.3 && cap < 0.6, `about 26 degrees (${cap * 180 / Math.PI})`);
+  // its plane turned to every eye along the walk: the segment through its foot, never within 0.5 eye heights of the walk
+  const nearest = (y) => {
+    let m = Infinity;
+    for (let q = 0; q <= 60; q++) { const x = f.left + (f.right - f.left) * q / 60; m = Math.min(m, pathGap(walk, f.foot[0] + x * Math.cos(y), f.foot[2] - x * Math.sin(y))); }
+    return m;
+  };
+  let uncapped = Infinity;
+  for (const p of walk) {
+    const eye = [p[0], EYE, p[2]];
+    assert.ok(nearest(turnYaw(cam, f.foot, eye, cap)) >= 0.5 * EYE - 1e-6, `clear of the walk seen from ${p[0].toFixed(1)}`);
+    uncapped = Math.min(uncapped, nearest(turnYaw(cam, f.foot, eye)));
+  }
+  assert.ok(uncapped < 0.01, `turned all the way it would lie across the walk (${uncapped})`);
+  // capped, it still turns toward the eye as far as it may, either face; from the painting camera not at all
+  const eye = [20, EYE, walk[0][2]], y = turnYaw(cam, f.foot, eye, cap);
+  close(Math.abs(y), cap, 1e-9, 'as far as it may');
+  assert.ok(Math.sign(y) === Math.sign(turnYaw(cam, f.foot, eye)), 'toward the eye');
+  assert.equal(turnYaw(cam, f.foot, cam.position, cap), 0);
+  close(turnYaw(cam, [0, 0, -10], [10, EYE, -40], 0.2), Math.PI - 0.2, 1e-9, 'behind it: its back turns to the eye, as far as it may');
+  assert.equal(turnCap(cam, walk, [0, 0, -120], 3), Math.PI, 'narrow and far from the walk: free');
+  assert.equal(turnCap(cam, walk, [0, 0, walk[0][2]], 3), 0, 'its foot on the walk: it stays square to the picture');
+  for (const bad of [null, [NaN, 0, 0]]) assert.equal(turnCap(cam, walk, bad, 3), Math.PI);
+  assert.equal(turnYaw(cam, f.foot, eye, NaN), turnYaw(cam, f.foot, eye), 'no cap');
+});
+
+test("hides: a flat between the eye and a point hides it; one beside, beyond, or the point's own does not", () => {
+  const flat = { left: -2, right: 2, height: 3 }, foot = [0, 0, -10], eye = [0, EYE, 0];
+  assert.equal(hides(flat, foot, 0, 1, eye, [0, 1, -30]), true, 'square on, in the way');
+  assert.equal(hides(flat, foot, 0, 1, eye, [0, 20, -30]), false, 'over its top');
+  assert.equal(hides(flat, foot, 0, 1, eye, [10, 1, -30]), false, 'past its side');
+  assert.equal(hides(flat, foot, 0, 1, eye, [0, 1, -5]), false, 'nearer than it');
+  assert.equal(hides(flat, foot, 0, 1, eye, [0, 1.5, -10]), false, 'on it: its own centre');
+  assert.equal(hides(flat, foot, 0, 2, eye, [0, 5, -30]), true, 'scaled up it reaches higher');
+  assert.equal(hides(flat, foot, Math.PI / 2, 1, eye, [0, 1, -30]), false, 'edge on to the line of sight');
+  assert.equal(hides(flat, foot, 0.6, 1, eye, [0, 1, -30]), true, 'turned, still across it');
+  for (const bad of [[null, foot], [flat, null], [flat, [NaN, 0, 0]]]) assert.equal(hides(bad[0], bad[1], 0, 1, eye, [0, 1, -30]), false);
+  assert.equal(hides(flat, foot, 0, 0, eye, [0, 1, -30]), false, 'no scale');
+});
+
+test("isDeck: the bridge the steam train's walk runs along lies on the floor; no sample object does", () => {
+  const pp = (scene) => pathPoints(scene, () => 0, 8);
+  assert.deepEqual(TRAIN.objects.filter((o) => isDeck(o, pp(TRAIN))).map((o) => o.label), ['bridge and river']);
+  for (const scene of [TURNER, SKETCH, STARRY]) for (const o of scene.objects) assert.equal(isDeck(o, pp(scene)), false, o.label);
+  const bridge = TRAIN.objects[1], along = (row) => [[0.1, 1 - row / 1000], [0.5, 1 - row / 1000], [0.9, 1 - row / 1000]];
+  assert.equal(isDeck(bridge, along(700)), true, 'within 15% of its height of its top');
+  assert.equal(isDeck(bridge, along(800)), false, 'the walk crosses its middle: in front of it or behind');
+  assert.equal(isDeck({ box: [300, 672, 700, 937] }, along(680)), false, 'narrow');
+  assert.equal(isDeck(bridge, [[0.5, 0.32]]), false, 'one path point over it');
+  assert.equal(isDeck(bridge, [[0.02, 0.32], [0.98, 0.32]]), false, 'none over its columns');
+  for (const bad of [null, 'x', [[NaN, 0.3], [null]]]) assert.equal(isDeck(bridge, bad), false);
+  assert.equal(isDeck(null, along(680)), false);
 });
