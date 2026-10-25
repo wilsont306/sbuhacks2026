@@ -18,7 +18,7 @@ import './artwork.css';
 let game = null, audio = null, margins = null;
 let state = { scene: null, id: null, saved: 'sample' };
 let gen = 0, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
-let gal = null, galOpen = false, galGen = 0, galRows = [[], [], []], galSel = { s: 0, i: 0 };
+let gal = null, galOpen = false, galGen = 0, galRows = [[], [], []], galSel = { s: 0, i: 0 }, galRemote = [];
 let galHover = false, galIdle = false; // the pointer made the current choice; the pointer left it and nothing is chosen
 const ADD = { add: true }; // the "Add a picture" engine that leads the how-it-works line
 const peeks = new Map(); // card id -> promise of its validated scene or null, fetched once on the first peek
@@ -187,7 +187,9 @@ async function openProject(c) {
   if (my !== gen) return false;
   const image = scene && (safeUrl(scene.image_url) || c.image);
   if (!image) { status("Couldn't open that saved picture; staying on this one", STATUS_MS); return false; }
-  return present(my, scene, image, c.saved === 'saved' ? 'saved' : 'local');
+  const ok = await present(my, scene, image, c.saved === 'saved' ? 'saved' : 'local');
+  if (!ok && my === gen) status("Couldn't open that saved picture; staying on this one", STATUS_MS); // its image would not load
+  return ok;
 }
 
 // A gallery card plays like keys 1 to 3 (a sample) or as its saved project, with the appear sound.
@@ -481,7 +483,7 @@ function renderSaved(saved) {
   galRows[2] = saved;
   gal.root.classList.toggle('three', saved.length > 0);
   fillShelf(2);
-  select(galSel, false, true);
+  select(galSel, galHover, true); // a pointer's choice still folds away when the pointer leaves
   if (idle) unchoose();
   fades(gal.shelves[2].list);
 }
@@ -494,11 +496,13 @@ async function openGallery() {
   tell(audio, 'play', 'gallery');
   const sam = await samples(), local = mirrorList();
   if (!galOpen || my !== galGen) return;
-  renderGallery(galleryLines({ samples: sam, local }, GALLERY_CARDS));
+  // The last Snowflake list draws at once, so the gallery opens at its final size instead of shrinking when it lands.
+  renderGallery(galleryLines({ samples: sam, local, remote: galRemote }, GALLERY_CARDS));
   // Then Snowflake's saved projects (a failure or an unconfigured store leaves today's copies only).
   const { body } = await getJson('/api/projects', { ms: 8000 });
-  if (!galOpen || my !== galGen || !isObj(body) || !Array.isArray(body.projects) || !body.projects.length) return;
-  const { saved } = galleryLines({ samples: sam, local, remote: body.projects }, GALLERY_CARDS);
+  if (!galOpen || my !== galGen || !isObj(body) || !Array.isArray(body.projects)) return;
+  galRemote = body.projects; // an emptied list clears it too
+  const { saved } = galleryLines({ samples: sam, local, remote: galRemote }, GALLERY_CARDS);
   if (saved.map((c) => c.id + c.saved).join() !== galRows[2].map((c) => c.id + c.saved).join()) renderSaved(saved);
 }
 
@@ -679,7 +683,7 @@ function buildDetail() {
       const [x0, y0, x1, y1] = o.box;
       parts.push({ label: o.label, points: o.mask || [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] });
     }
-    view.setAttribute('aria-label', `${c.title}: ${parts.map((p) => p.label).join(', ')}`);
+    view.setAttribute('aria-label', `${title.textContent}: ${parts.map((p) => p.label).join(', ')}`);
     hint.textContent = parts.length ? 'Point at the picture: each part lifts out and says its name.' : '';
     note.textContent = !parts.length ? 'No saved reading: this one rides as a flat picture.'
       : c.saved === 'sample' ? 'What each one does, you find out on board.'
@@ -750,7 +754,8 @@ function buildBoard() {
   back.addEventListener('click', () => { close(); openGallery(); });
   modalKeys(root, close);
   const show = (c) => {
-    title.textContent = c.title;
+    title.textContent = nameOf(c); // a project's name, by its objects once its scene is read (the sidebar read it)
+    if (c.saved !== 'sample') sceneFor(c).then((sc) => { if (sc && !root.hidden) title.textContent = nameOf(c, sc); });
     qrKey = null;
     seatKeys = [];
     refresh();

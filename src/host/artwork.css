@@ -66,12 +66,14 @@
 .three .art-shelf.major, .three .art-shelf.minor { --car-w: 212px; --mat-h: 112px; --plate-h: 80px; --title-fs: 20px; margin-top: 8px; }
 .three .art-shelf-head h3, .three .minor .art-shelf-head h3 { font-size: 22px; }
 .three .art-row { padding-top: 26px; padding-bottom: 36px; }
+.three .major .art-row { padding-top: 34px; } /* room for the Step boards above the demo carriages */
+.three .art-card::after { bottom: -19px; } /* the shorter row: the bogies lift so the wheels stand on the rail */
 .three .art-add { width: 210px; }
 .three .art-add .art-title { font-size: 24px; }
-.three .art-add-note { font-size: 18px; }
+.three .art-add-note { font-size: 20px; }
 .three .art-engine { width: 200px; height: 133px; margin: 28px 0 -27px; }
 .three .art-meta { min-height: 26px; }
-.three .art-by { font-size: 18px; }
+.three .art-by { font-size: 20px; }
 .art-shelf::before {
   content: ''; position: absolute; left: calc(-1 * var(--edge)); right: calc(-1 * var(--edge)); bottom: 0; height: 20px;
   background:
