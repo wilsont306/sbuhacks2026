@@ -7,6 +7,7 @@
 // textContent only.
 import learning from '../shared/learning.json';
 import { objectHotspots, pathPoints } from './maskDepth.js';
+import { projectTitle } from './gallery.js';
 import './margins.css';
 
 /* pure:start (tests/margins.test.js imports this block on its own, so it must not use imports or globals) */
@@ -42,15 +43,14 @@ export function stamp(at) {
   return str(at, 40);
 }
 
-// What the station sign and the source block show for a scene; null when there is none. (The stops come from the
-// scene's objects.)
+// What the station sign and the source block show for a scene; null when there is none. (The sign's title is
+// gallery.js projectTitle's, so it matches the picture's gallery carriage; the stops come from the scene's objects.)
 export function labelOf(scene) {
   if (!scene || typeof scene !== 'object') return null;
   // the validator writes 'unknown' when Gemini gave no guess
   const guess = (v, what) => { const s = str(v, 120); return s && s.toLowerCase() !== 'unknown' ? s : `${what} unknown`; };
   return {
     artist: guess(scene.artist_guess, 'Artist'),
-    title: guess(scene.title_guess, 'Title'),
     chip: chipText(scene),
     credit: str(scene.credit, 300),
     thumb: safeUrl(scene.image_url),
@@ -235,7 +235,9 @@ function renderScene() {
   // the margins clamp long lines with an ellipsis; the title attribute keeps the full text
   const full = (el) => { el.title = el.textContent; return el; };
   // The sign: the title (a subtitle after a dash or colon goes on its own smaller line), the artist, whose guess.
-  const [main, ...rest] = m ? m.title.split(/\s+[–—-]\s+|:\s+/) : [], sub = rest.join(' – ');
+  // A picture Gemini could not name is named by its objects, as its gallery carriage is (gallery.js projectTitle).
+  const name = m ? projectTitle(scene.title_guess, scene, Date.parse(scene.generated_at)) : '';
+  const [main, ...rest] = name.split(/\s+[–—-]\s+|:\s+/), sub = rest.join(' – ');
   els.label.replaceChildren(...(m ? [
     full(h('p', 'title ai', main)), ...(sub ? [full(h('p', 'sub ai', sub))] : []), full(h('p', 'artist ai', m.artist)),
     h('p', 'chip ai', m.chip), h('p', 'labels-note', 'AI labels hidden'),
