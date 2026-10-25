@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   EYE, horizonRow, paintingCamera, rayAt, project, imageToFloor, rowDistance, planePoint, uvToFloor, uvToImage, padBox, flatOf, extentOf,
-  fitDepth, distanceAt, fillDepth, flatDistance, reliefGrid, terrainPath, sampleDepth, shapeOf, walkSign,
+  fitDepth, distanceAt, fillDepth, flatDistance, reliefGrid, terrainPath, sampleDepth, shapeOf, walkSign, pushPull,
 } from '../src/world/tip.js';
 import { validateScene } from '../src/shared/scene-validate.js';
 import { pathPoints } from '../src/host/maskDepth.js';
@@ -388,4 +388,68 @@ test('walkSign: Walk goes the path way nearer the look, switching only 15 degree
   };
   sweep(0.25, 179.75, 0.5); sweep(179.75, 0.25, -0.5); // off the exact boundary, where rounding decides
   assert.deepEqual(flips, [[105.25, -1], [74.75, 1]]);
+});
+
+test('pushPull fills a hole from the colours around it, never its own', () => {
+  // red left half, blue right half, a black object across the seam: the gap takes red and blue, never black
+  const w = 64, h = 48, px = new Uint8ClampedArray(w * h * 4), hole = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) {
+    const i = k % w, j = (k - i) / w, inHole = i >= 20 && i < 44 && j >= 8 && j < 40;
+    px.set(inHole ? [0, 0, 0, 255] : i < 32 ? [200, 0, 0, 255] : [0, 0, 200, 255], 4 * k);
+    hole[k] = inHole ? 1 : 0;
+  }
+  const before = px.slice();
+  assert.equal(pushPull(px, w, h, hole), true);
+  for (let k = 0; k < w * h; k++) {
+    if (!hole[k]) { assert.deepEqual([...px.subarray(4 * k, 4 * k + 4)], [...before.subarray(4 * k, 4 * k + 4)], 'known pixels stay'); continue; }
+    const [r, g, b, a] = px.subarray(4 * k, 4 * k + 4);
+    assert.ok(Math.abs(r + b - 200) <= 2 && g === 0 && a === 255, `a hole pixel is a blend of its surroundings: ${r},${g},${b},${a}`);
+  }
+  const row = 24 * w, red = (i) => px[4 * (row + i)];
+  assert.ok(red(20) > 150 && red(43) < 50, 'each side of the gap takes its own side');
+  for (let i = 21; i < 44; i++) assert.ok(red(i) <= red(i - 1), 'and blends across it');
+  // one colour around a hole fills it with that colour exactly; holes at the picture's edge fill too
+  const g = new Uint8ClampedArray(9 * 7 * 4), gh = new Uint8Array(9 * 7);
+  for (let k = 0; k < 63; k++) { gh[k] = k % 9 < 4 || k < 9 ? 1 : 0; g.set(gh[k] ? [255, 255, 255, 255] : [10, 180, 30, 255], 4 * k); }
+  assert.equal(pushPull(g, 9, 7, gh), true);
+  for (let k = 0; k < 63; k++) assert.deepEqual([...g.subarray(4 * k, 4 * k + 3)], [10, 180, 30]);
+  // nothing known: untouched and false; a single pixel; a column
+  const all = new Uint8ClampedArray(16).fill(7);
+  assert.equal(pushPull(all, 2, 2, new Uint8Array(4).fill(1)), false);
+  assert.deepEqual([...all], new Array(16).fill(7));
+  assert.equal(pushPull(new Uint8ClampedArray([1, 2, 3, 4]), 1, 1, new Uint8Array(1)), true);
+  const col = new Uint8ClampedArray([0, 0, 0, 255, 9, 9, 9, 255, 0, 0, 0, 255, 0, 0, 0, 255, 90, 90, 90, 255]);
+  assert.equal(pushPull(col, 1, 5, new Uint8Array([1, 0, 1, 1, 0])), true);
+  assert.ok(col[0] === 9 && col[8] >= 9 && col[8] <= 90 && col[12] >= col[8] && col[12] <= 90, 'a column fills from its ends');
+});
+
+test('pushPull strokes carry the brushwork beside a gap into it, on the colours around it', () => {
+  // grey stripes (160 and 80, two pixels each, mean 120) with a black object across the middle
+  const w = 64, h = 32, make = () => {
+    const px = new Uint8ClampedArray(w * h * 4), hole = new Uint8Array(w * h);
+    for (let k = 0; k < w * h; k++) {
+      const i = k % w, v = i >= 24 && i < 40 ? 0 : i % 4 < 2 ? 160 : 80;
+      px.set([v, v, v, 255], 4 * k); hole[k] = v ? 0 : 1;
+    }
+    return { px, hole };
+  };
+  const stats = (px) => {
+    const row = 16 * w, vs = [];
+    for (let i = 24; i < 40; i++) vs.push(px[4 * (row + i)]);
+    const m = vs.reduce((a, b) => a + b) / vs.length;
+    return { m, sd: Math.sqrt(vs.reduce((a, b) => a + (b - m) * (b - m), 0) / vs.length), min: Math.min(...vs), vs };
+  };
+  const plain = make(), brushed = make();
+  assert.equal(pushPull(plain.px, w, h, plain.hole), true);
+  assert.equal(pushPull(brushed.px, w, h, brushed.hole, 1), true);
+  const p = stats(plain.px), b = stats(brushed.px);
+  assert.ok(p.sd < 6, `no strokes: smooth (${p.sd})`);
+  assert.ok(b.sd > 15, `strokes: the stripes carry on (${b.sd})`);
+  assert.ok(Math.abs(b.m - 120) < 12 && b.min > 50, `on the colours around it, never the object's black: ${b.vs}`);
+  assert.ok(b.vs[0] < 100 && b.vs[2] > 140, 'mirrored across the gap\'s left edge (pixel 23 is 80, 21 is 160)');
+  assert.ok(b.vs[15] > 140 && b.vs[13] < 100, 'and its right edge (pixel 40 is 160, 42 is 80)');
+  // a gap with nothing known on its row, and strokes out of range, never throw
+  const g = new Uint8ClampedArray(8 * 8 * 4).fill(200), gh = new Uint8Array(64);
+  gh.fill(1, 0, 8);
+  for (const s of [NaN, -1, 5, 'x', undefined]) assert.equal(pushPull(g.slice(), 8, 8, gh, s), true);
 });

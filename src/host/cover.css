@@ -1,0 +1,72 @@
+/* src/host/cover.js's cover, "Canvas Express": the gallery's night railway as the TV's front page. A flat night sky
+   with a crescent moon and stars, far hills, a winding rail of steel over wooden sleepers, a paper train (cream card
+   cut with an ink edge, livery bands, lit lamps) running it, the title in display type, and one cream ticket. It
+   covers the whole window (the frame widened by --bleed-x, the letterbox above and below by --bleed-y) over every
+   other screen. Tokens only. */
+.cover {
+  /* 2 px past every edge: the stage canvas, a GPU layer, can land a fraction of a pixel outside a scaled overlay */
+  position: absolute; inset: calc(-1 * var(--bleed-y, 0px) - 2px) -2px; z-index: 30; overflow: hidden; outline: none;
+  background: var(--rail-night); color: var(--cream); transform-origin: 50% 50%;
+}
+.cover-frame { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform: translate(-50%, -50%); }
+
+.cover-sky, .cover-rail { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.cover-sky .moon { fill: var(--cream); }
+.cover-sky .bite { fill: var(--rail-night); }
+.cover-sky .star { fill: var(--cream); opacity: .35; animation: art-star 3.2s ease-in-out infinite alternate; }
+.cover-sky .hills { fill: color-mix(in srgb, var(--rail-dusk) 70%, var(--rail-night)); }
+
+/* The rail: wide sleepers, two steel rails (one stroke, its middle cut out in night), sleepers again between them. */
+.cover-rail path { fill: none; stroke-linecap: butt; }
+.cover-rail .sleepers { stroke: var(--sleeper); stroke-width: 34; stroke-dasharray: 9 21; }
+.cover-rail .rails { stroke: var(--rail); stroke-width: 16; }
+.cover-rail .gap { stroke: var(--rail-night); stroke-width: 10; }
+
+/* The train runs the rail's own path: the engine leads, each carriage 1.55 s behind it, round the loop every 22 s
+   (off the right edge, back in at the left; longer on a window wide enough that cover.js runs the path on, --roam).
+   The cars lean with the rail. This roaming, like the gallery's passing scenery and the cover's crumple, ignores
+   reduced motion by the owner's choice. */
+.cover-train { position: absolute; inset: 0; pointer-events: none; }
+.cover-car {
+  position: absolute; left: 0; top: 0; width: 190px; offset-anchor: 50% 92%; offset-rotate: auto;
+  filter: drop-shadow(0 0 1px var(--paper)) drop-shadow(0 6px 4px var(--vignette));
+}
+.cover-car.engine { width: 230px; }
+.cover-car svg { display: block; width: 100%; height: auto; overflow: visible; }
+#tv .cover .cover-car { animation: cover-roam var(--roam, 22s) linear calc(var(--i, 0) * 1.55s - 10s) infinite !important; }
+@keyframes cover-roam { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+.cover-car .paper { fill: var(--paper); stroke: var(--ink); stroke-width: 3; stroke-linejoin: round; }
+.cover-car .band { fill: var(--livery); }
+.cover-car .brass { fill: var(--brass); stroke: var(--ink); stroke-width: 2; }
+.cover-car .lamp { fill: var(--lamp); stroke: var(--ink); stroke-width: 2.5; }
+.cover-car .wheel { fill: var(--livery-deep); stroke: var(--ink); stroke-width: 3; }
+.cover-car .puffs { fill: var(--cream); opacity: .45; }
+
+/* The title, and under it the one ticket: cream card stock inside a livery rule, punched at both ends. */
+.cover-title {
+  position: absolute; left: 0; right: 0; top: 250px; margin: 0; text-align: center;
+  font: 400 156px/1 var(--font-display); letter-spacing: .01em; color: var(--cream);
+}
+.cover-title::after { content: ''; display: block; width: 200px; height: 3px; margin: 30px auto 0; background: var(--brass); }
+.cover-ticket {
+  position: absolute; left: 50%; top: 500px; display: grid; place-items: center; width: 440px; height: 128px; padding: 0;
+  border: 0; border-radius: 10px; background: var(--paper); color: var(--livery); cursor: pointer;
+  box-shadow: inset 0 0 0 7px var(--paper), inset 0 0 0 10px var(--livery), 0 12px 24px var(--rail-night);
+  transform: translateX(-50%); transition: transform 240ms cubic-bezier(.3, 1.4, .5, 1);
+}
+.cover-ticket::before, .cover-ticket::after {
+  content: ''; position: absolute; top: 50%; width: 30px; height: 30px; margin-top: -15px; border-radius: 50%; background: var(--rail-night);
+}
+.cover-ticket::before { left: -15px; }
+.cover-ticket::after { right: -15px; }
+.cover-ticket:hover { transform: translateX(-50%) translateY(-5px) rotate(-1deg); } /* focus keeps the brass ring (host.css) only */
+.cover-ticket.punched { transform: translateX(-50%) scale(.97); }
+.cover-ticket-name { font: 400 56px/1 var(--font-display); }
+
+/* The sheet's cream back, which shows through as the page crumples into a paper ball, then the folds over it
+   (cover.js animates both with the crumple). */
+.cover-paper { position: absolute; inset: 0; background: var(--paper); opacity: 0; pointer-events: none; }
+.cover-creases { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.cover-creases line { vector-effect: non-scaling-stroke; }
+.cover-creases .valley { stroke: var(--ink); stroke-opacity: .6; stroke-width: 2.5; }
+.cover-creases .ridge { stroke: var(--cream); stroke-opacity: .3; stroke-width: 1.5; }

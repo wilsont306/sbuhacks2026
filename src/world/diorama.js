@@ -1,24 +1,25 @@
 // The inside view's world (src/join/inside.js builds it when a phone steps inside): a Tour-into-the-Picture diorama of
 // a validated scene, on tip.js's geometry. The floor, the back wall and one standing flat per object all sample the
 // painting by projective texturing through the painting camera, so from that camera the world is exactly the picture
-// and from anywhere else a paper theatre with depth. Each flat's pixels are blurred out of the floor and wall behind
-// it (the "plate"), so walking past an object does not show it twice. With a depth picture (opts.depth) whose floor
-// fits TIP's, the floor and wall become one relief mesh (the depth room, tip.js), the flats stand at their depth and
-// the walk follows the terrain; without one, or when the fit fails, the plain floor and wall planes. An object's
-// optional model_url (a GLB) stands in for its flat once it loads. No ?. or ??: the phone's lazy inside chunk imports
-// this file (iOS 13).
+// and from anywhere else a paper theatre with depth. Each flat's pixels are inpainted out of the floor and wall behind
+// it from the colours around them (the "plate"), so walking past an object does not show it twice. With a depth
+// picture (opts.depth) whose floor fits TIP's, the floor and wall become one relief mesh (the depth room, tip.js), the
+// flats stand at their depth and the walk follows the terrain; without one, or when the fit fails, the plain floor and
+// wall planes. An object's optional model_url (a GLB) stands in for its flat once it loads. No ?. or ??: the phone's
+// lazy inside chunk imports this file (iOS 13).
 import * as THREE from 'three';
 import { validateScene } from '../shared/scene-validate.js';
 import { pathPoints } from '../host/maskDepth.js';
 import {
   BACKDROP, FLOOR_KINDS, paintingCamera, imageToFloor, planePoint, padBox, flatOf, extentOf,
-  fitDepth, fillDepth, flatDistance, reliefGrid, terrainPath, shapeOf,
+  fitDepth, fillDepth, flatDistance, reliefGrid, terrainPath, shapeOf, pushPull,
 } from './tip.js';
 
 const MAX_TEX = 2048;  // plate pixels on the long side
 const MASK_PX = 256;   // a flat's mask canvas on its long side
 const RIM = 6;         // the cut-out's paper border, in image units across (0.6% of the picture's width)
-const BLUR_PX = 24;    // the plate's fill is the picture shrunk to this width and stretched back: a blur iOS 13 draws
+const FILL_PX = 512;   // the plate's hole fill is worked at this size on the long side, then scaled up (a fill is soft)
+const STROKES = 0.5;   // how much of the brushwork beside a hole carries into it (tip.js pushPull)
 const MODEL_MS = 20000;
 const PATH_K = 128;    // the walk is sampled this many steps along t
 // Under the relief the plain floor stays as a skirt (seen past the picture's edges and through cut silhouettes),
@@ -38,37 +39,71 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
-// uv = the rest position projected through the painting camera, so a moving flat carries its own pixels. uv is clamped,
-// so everything outside the picture's frame stretches its edges: the floor nearer than the picture's foot shows its
-// bottom row, and the dome (the sky beside and behind the camera) the border colours, never a void.
+// uv = the rest position projected through the painting camera, so a moving flat carries its own pixels. Outside the
+// picture's frame the painting continues mirrored about edges inset by EDGE, so the picture's own pale border never
+// lines a seam (the floor nearer than the picture's foot mirrors the floor beyond it), easing from about half a
+// picture out into a softer mip of itself (BLUR). The border band inside the frame stays as painted while the eye is
+// at the painting camera and joins the mirror once it has stepped away, so the painting camera still sees exactly
+// the picture. The dome maps each direction from the painting camera, one behind it mirrored to the front the way
+// the floor is: projective near the frame (so it meets the wall's edges seamlessly), by angle further out (so uv
+// stays bounded round the sides, with no streaks or kaleidoscope); the floor turns into that mapping as it nears
+// the dome, so the horizon has no seam. Whatever lies behind the painting camera (dome and floor alike) takes the
+// soft mip.
 const FRAG = `
+#define EDGE 0.015
+#define BLUR 3.0
 uniform sampler2D uMap;
 uniform mat4 uPaint;
 uniform vec3 uCam;
 uniform float uNear;
+uniform float uR;
 uniform float uGlow;
 varying vec3 vRest;
 #ifdef CUT
 uniform sampler2D uMask;
 uniform vec4 uBox;
 #endif
+#if defined(FLOOR) || defined(DOME)
+// d: a direction from the painting camera; lens: its projection's x and y scale. Exactly projective inside the
+// frame, turning to by-angle from the frame's edge to a picture beyond it.
+vec2 domeUv(vec3 d, vec2 lens) {
+  d.z = -abs(d.z);
+  vec4 pd = uPaint * vec4(d, 0.0);
+  vec3 e = normalize(vec3(pd.xy / lens, abs(pd.w))); // its own frame, z toward the picture
+  e.z = max(e.z, 0.001); // beside the camera ndc stays finite (it is by-angle there anyway)
+  vec2 ndc = e.xy * lens / e.z;
+  vec2 ang = vec2(atan(e.x, e.z), atan(e.y, length(e.xz))) / atan(1.0 / lens);
+  return mix(ndc, ang, smoothstep(1.0, 3.0, max(abs(ndc.x), abs(ndc.y)))) * 0.5 + 0.5;
+}
+#endif
 void main() {
   vec3 q = vRest;
+  float soft = 0.0;
+#if defined(FLOOR) || defined(DOME)
+  vec2 lens = vec2(length(vec3(uPaint[0][0], uPaint[1][0], uPaint[2][0])), length(vec3(uPaint[0][1], uPaint[1][1], uPaint[2][1])));
+  vec4 pd = uPaint * vec4(q - uCam, 0.0);
+  soft = 1.0 - smoothstep(-0.4, 0.0, pd.w / length(vec3(pd.xy / lens, pd.w))); // edges in order: GLSL leaves edge0 > edge1 undefined
+  vec2 uv = domeUv(q - uCam, lens);
 #ifdef FLOOR
-  q.z = min(q.z, -uNear);
+  if (q.z > -uNear) {
+    q.z = -2.0 * uNear - q.z;
+    uv = mix(domeUv(q - uCam, lens), uv, smoothstep(0.5 * uR, uR, length(vRest - uCam)));
+  }
 #endif
-#ifdef DOME
-  vec3 d = q - uCam;
-  d.z = min(d.z, -0.05 * length(d));
-  q = uCam + d;
-#endif
+#else
   vec4 p = uPaint * vec4(q, 1.0);
-  vec2 uv = clamp(p.xy / max(p.w, 0.0001) * 0.5 + 0.5, 0.0, 1.0);
+  vec2 uv = p.xy / max(p.w, 0.0001) * 0.5 + 0.5;
+#endif
 #ifdef CUT
   vec2 m = (uv - uBox.xy) / (uBox.zw - uBox.xy);
   if (m.x < 0.0 || m.x > 1.0 || m.y < 0.0 || m.y > 1.0 || texture2D(uMask, m).r < 0.5) discard;
 #endif
-  gl_FragColor = vec4(texture2D(uMap, uv).rgb * (1.0 + uGlow), 1.0);
+  vec2 o = max(max(-uv, uv - 1.0), 0.0);
+  float far = max(soft, smoothstep(0.6, 2.0, max(o.x, o.y)));
+  float away = o.x + o.y > 0.0 ? 1.0 : smoothstep(0.0, 0.1 * uNear, distance(cameraPosition, uCam));
+  uv = mix(uv, EDGE + (1.0 - 2.0 * EDGE) * (1.0 - abs(mod((uv - EDGE) / (1.0 - 2.0 * EDGE), 2.0) - 1.0)), away);
+  vec3 c = mix(texture2D(uMap, uv).rgb, texture2D(uMap, uv, BLUR).rgb, far);
+  gl_FragColor = vec4(c * (1.0 + uGlow), 1.0);
 }`;
 
 const fin = (v) => typeof v === 'number' && isFinite(v);
@@ -101,33 +136,49 @@ function maskTexture(shape, box, A) {
   return t;
 }
 
-// The picture with every standing object (and its rim) filled with a blur, for the floor and the wall. null when the
-// image cannot be read back (no DOM, no size, or a cross-origin canvas, which WebGL would refuse as well).
+// The picture with every standing object (and its rim) inpainted from the colours around it (tip.js pushPull), for
+// the floor and the wall. null when the image cannot be read back (no DOM, no size, or a cross-origin canvas, which
+// WebGL would refuse as well).
 function plateTexture(img, shapes) {
   if (!shapes.length || !img || typeof document === 'undefined') return null;
+  let c = null, small = null, mask = null; // zeroed on the way out (iOS counts canvas memory), c kept only by a texture
   try {
     const nw = img.naturalWidth || img.videoWidth || img.width, nh = img.naturalHeight || img.videoHeight || img.height;
     if (!(nw > 0 && nh > 0)) return null;
     const k = Math.min(1, MAX_TEX / Math.max(nw, nh)), w = Math.max(1, Math.round(nw * k)), h = Math.max(1, Math.round(nh * k));
-    const c = canvasOf(w, h), ctx = c.getContext('2d');
+    c = canvasOf(w, h);
+    const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0, w, h);
-    ctx.getImageData(0, 0, 1, 1); // throws on a tainted canvas
-    const small = canvasOf(BLUR_PX, Math.max(1, Math.round(BLUR_PX * h / w))), blur = canvasOf(w, h);
-    small.getContext('2d').drawImage(c, 0, 0, small.width, small.height);
-    blur.getContext('2d').drawImage(small, 0, 0, w, h);
-    ctx.fillStyle = ctx.strokeStyle = ctx.createPattern(blur, 'no-repeat');
-    ctx.lineWidth = 2 * RIM * w / 1000; ctx.lineJoin = 'round';
-    for (const shape of shapes) { trace(ctx, shape, 0, 0, w / 1000, h / 1000); ctx.fill(); ctx.stroke(); }
-    small.width = 0; blur.width = 0;
+    const f = Math.min(1, FILL_PX / Math.max(w, h)), fw = Math.max(1, Math.round(w * f)), fh = Math.max(1, Math.round(h * f));
+    small = canvasOf(fw, fh); mask = canvasOf(fw, fh);
+    const sctx = small.getContext('2d'), mctx = mask.getContext('2d');
+    sctx.imageSmoothingQuality = 'high'; // a 4x shrink; Safari's default 'low' aliases the brushwork
+    sctx.drawImage(c, 0, 0, fw, fh);
+    const px = sctx.getImageData(0, 0, fw, fh); // throws on a tainted canvas
+    // the holes: every outline with its rim, and a pixel more all round (the shrink mixed the object into its edge)
+    mctx.fillStyle = mctx.strokeStyle = '#fff';
+    mctx.lineWidth = 2 * RIM * fw / 1000 + 2; mctx.lineJoin = 'round';
+    for (const shape of shapes) { trace(mctx, shape, 0, 0, fw / 1000, fh / 1000); mctx.fill(); mctx.stroke(); }
+    const m = mctx.getImageData(0, 0, fw, fh).data, hole = new Uint8Array(fw * fh);
+    for (let i = 0; i < hole.length; i++) hole[i] = m[4 * i + 3] ? 1 : 0;
+    if (!pushPull(px.data, fw, fh, hole, STROKES)) return null;
+    sctx.putImageData(px, 0, 0);
+    sctx.globalCompositeOperation = 'destination-in'; // only the holes, soft-edged, go back over the full-size picture
+    sctx.drawImage(mask, 0, 0);
+    ctx.drawImage(small, 0, 0, w, h);
     const t = new THREE.CanvasTexture(c);
-    t.anisotropy = 8; // the far floor is seen at a grazing angle; the renderer clamps this to what the GPU has
+    t.anisotropy = 16; // the far floor is seen at a grazing angle; the renderer clamps this to what the GPU has
+    t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; // past the frame the painting continues mirrored (FRAG)
+    c = null;
     return t;
   } catch (e) {
     return null;
+  } finally {
+    for (const cv of [c, small, mask]) if (cv) cv.width = cv.height = 0;
   }
 }
 
-// o.part: 'floor', 'dome' or a flat (o.mask set); anything else is the back wall.
+// o.part: 'floor', 'dome' or a flat (o.mask set); anything else is the back wall. o.R: the dome's radius (the floor).
 function paintMaterial(map, paint, cam, rest, o) {
   const defines = {};
   if (o.part === 'floor') defines.FLOOR = '';
@@ -136,7 +187,7 @@ function paintMaterial(map, paint, cam, rest, o) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uMap: { value: map }, uPaint: { value: paint }, uRest: { value: rest }, uCam: { value: v3(cam.position) }, uNear: { value: cam.nearDist },
-      uGlow: { value: 0 }, uMask: { value: o.mask || null }, uBox: { value: o.box || new THREE.Vector4(0, 0, 1, 1) },
+      uR: { value: o.R || 1 }, uGlow: { value: 0 }, uMask: { value: o.mask || null }, uBox: { value: o.box || new THREE.Vector4(0, 0, 1, 1) },
     },
     defines, vertexShader: VERT, fragmentShader: FRAG, side: o.side || THREE.FrontSide,
   });
@@ -211,7 +262,7 @@ export function buildDiorama(scene, texture, opts) {
   const floorGeo = new THREE.PlaneGeometry(2 * R, wallZ + R);
   floorGeo.rotateX(-Math.PI / 2);
   floorGeo.translate(0, grid ? -SKIRT : 0, (R - wallZ) / 2);
-  group.add(new THREE.Mesh(floorGeo, paintMaterial(back, paint, cam, I, { part: 'floor' })));
+  group.add(new THREE.Mesh(floorGeo, paintMaterial(back, paint, cam, I, { part: 'floor', R })));
   const wallGeo = new THREE.PlaneGeometry(ext.width, ext.height);
   wallGeo.translate(0, ext.height / 2, -wallZ);
   group.add(new THREE.Mesh(wallGeo, paintMaterial(back, paint, cam, I, {})));

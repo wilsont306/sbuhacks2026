@@ -17,7 +17,7 @@ import './artwork.css';
 
 let game = null, audio = null, margins = null;
 let state = { scene: null, id: null, saved: 'sample' };
-let gen = 0, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
+let gen = 0, bootGen = -1, reading = false, statusTimer = 0, stage = Promise.resolve(), sampleList = null;
 let gal = null, galOpen = false, galGen = 0, galRows = [[], [], []], galSel = { s: 0, i: 0 }, galRemote = [];
 let galHover = false, galIdle = false; // the pointer made the current choice; the pointer left it and nothing is chosen
 const ADD = { add: true }; // the "Add a picture" engine that leads the how-it-works line
@@ -66,7 +66,7 @@ async function present(my, scene, image, saved, fallback) {
   status(null);
   tell(margins, 'setScene', scene, { saved, image: shown }); // the stops crop the picture actually on stage
   tell(audio, 'prepare', scene);
-  closeGallery();
+  if (my !== bootGen) closeGallery(); // the boot sample can land after the cover's ticket opened the gallery
   return true;
 }
 
@@ -377,19 +377,31 @@ const STEP_ARROW = `<svg class="art-step-arrow" viewBox="0 0 160 44" aria-hidden
 </svg>`;
 const STEPS = ['Drop or photograph a picture', 'Gemini outlines what is in it', 'It stands up in 3D', 'Step into the world from your phone'];
 
+// Step 4's window: a phone held up in it, its screen the walker's own view (the sketch close up, at the house, at eye
+// level) over its walk buttons, so the step shows the phone and not the picture of step 3 again.
+function phoneEl(sample) {
+  const mat = el('span', 'art-mat selected'), phone = el('span', 'art-phone'), screen = el('span', 'art-phone-screen');
+  const pad = el('span', 'art-phone-pad');
+  screen.style.backgroundImage = `url(${JSON.stringify(sample.image)})`;
+  pad.append(el('span', 'art-phone-key back'), el('span', 'art-phone-key'));
+  phone.append(screen, pad);
+  mat.append(phone);
+  return mat;
+}
+
 // The how-it-works line demonstrates the pipeline on a sample, in green demonstration carriages behind the engine,
-// arrowed one to the next: the picture, Gemini's outlines, its cut-outs standing up, then a rider standing in it.
+// arrowed one to the next: the picture, Gemini's outlines, its cut-outs standing up, then the view from a phone in it.
 function ghostSteps(sample) {
   return STEPS.map((text, k) => {
     const li = el('li', 'art-slot'), car = el('div', 'art-card art-demo');
     li.setAttribute('aria-hidden', 'true');
     car.append(el('span', 'art-ghost-n', String(k + 1)));
-    if (sample && sample.image) {
+    if (sample && sample.image && k === 3) car.append(phoneEl(sample));
+    else if (sample && sample.image) {
       const { mat, plate } = printEl(sample);
       car.append(mat);
       if (k === 1) sceneFor(sample).then((scene) => outline(plate, peekLayers(scene)));
-      if (k >= 2) { mat.classList.add('selected'); peek(mat, sample); }
-      if (k === 3) plate.append(el('span', 'art-rider'));
+      if (k === 2) { mat.classList.add('selected'); peek(mat, sample); }
     }
     car.append(el('span', 'art-ghost-text', text));
     li.append(car);
@@ -515,6 +527,11 @@ function closeGallery() {
 export function toggleGallery() {
   if (galOpen) closeGallery();
   else openGallery();
+}
+
+// Opens the gallery if it is not open (cover.js's "Host a ride" ticket).
+export function showGallery() {
+  if (!galOpen) openGallery();
 }
 
 export const current = () => ({ scene: state.scene, id: state.id, saved: state.saved });
@@ -871,4 +888,5 @@ export function init(opts = {}) {
   wireDrop();
   addEventListener('keydown', onKey, true);
   loadSample(1);
+  bootGen = gen;
 }

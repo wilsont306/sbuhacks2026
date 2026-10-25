@@ -344,6 +344,108 @@ export function reliefGrid(cam, fit, depth) {
   return { position, index, cols, rows };
 }
 
+// The plate's hole fill (diorama.js): push-pull inpainting. Every pixel of a w by h RGBA picture (rgba, 4 bytes a
+// pixel, changed in place) with hole[k] set takes the colours around the hole, coarse to fine: a pyramid of 2x2 means
+// over known pixels only (push), then each level's holes from the level above, bilinear (pull). A hole never keeps
+// its own colour. strokes (0..1, default 0) adds that share of the brushwork beside the hole (strokesInto). Returns
+// false, rgba untouched, when no pixel is known.
+const STROKE_LEVEL = 3; // brushwork is what the picture has finer than its means over 8 by 8 pixels
+export function pushPull(rgba, w, h, hole, strokes) {
+  let lw = w, lh = h, col = new Float32Array(w * h * 3), known = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) {
+    if (hole[k]) continue;
+    known[k] = 1; col[3 * k] = rgba[4 * k]; col[3 * k + 1] = rgba[4 * k + 1]; col[3 * k + 2] = rgba[4 * k + 2];
+  }
+  const levels = [{ w, h, col, known }];
+  while (lw > 1 || lh > 1) {
+    const nw = Math.ceil(lw / 2), nh = Math.ceil(lh / 2), nc = new Float32Array(nw * nh * 3), nk = new Uint8Array(nw * nh);
+    for (let j = 0; j < nh; j++) {
+      for (let i = 0; i < nw; i++) {
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let y = 2 * j; y < Math.min(lh, 2 * j + 2); y++) {
+          for (let x = 2 * i; x < Math.min(lw, 2 * i + 2); x++) {
+            const k = y * lw + x;
+            if (known[k]) { r += col[3 * k]; g += col[3 * k + 1]; b += col[3 * k + 2]; n++; }
+          }
+        }
+        if (n) { const q = j * nw + i; nc[3 * q] = r / n; nc[3 * q + 1] = g / n; nc[3 * q + 2] = b / n; nk[q] = 1; }
+      }
+    }
+    lw = nw; lh = nh; col = nc; known = nk;
+    levels.push({ w: lw, h: lh, col, known });
+  }
+  if (!known[0]) return false;
+  for (let L = levels.length - 2; L >= 0; L--) {
+    const f = levels[L], c = levels[L + 1], X = taps(f.w, c.w), Y = taps(f.h, c.h);
+    for (let j = 0; j < f.h; j++) {
+      const j0 = Y.i0[j] * c.w, j1 = Y.i1[j] * c.w, fy = Y.f[j];
+      for (let i = 0, k = j * f.w; i < f.w; i++, k++) if (!f.known[k]) lerp(c, X, i, j0, j1, fy, f.col, 3 * k);
+    }
+  }
+  const out = levels[0].col;
+  if (fin(strokes) && strokes > 0 && levels.length > STROKE_LEVEL) strokesInto(out, w, h, hole, levels[STROKE_LEVEL], Math.min(1, strokes));
+  for (let k = 0; k < w * h; k++) {
+    if (hole[k]) { rgba[4 * k] = Math.round(out[3 * k]); rgba[4 * k + 1] = Math.round(out[3 * k + 1]); rgba[4 * k + 2] = Math.round(out[3 * k + 2]); }
+  }
+  return true;
+}
+
+// Bilinear taps from an axis of n pixels onto a coarser one of m: pixel i reads i0[i] and i1[i], the second weighted f[i].
+function taps(n, m) {
+  const i0 = new Int32Array(n), i1 = new Int32Array(n), f = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const x = clamp((i + 0.5) * m / n - 0.5, 0, m - 1); i0[i] = Math.floor(x); i1[i] = Math.min(m - 1, i0[i] + 1); f[i] = x - i0[i]; }
+  return { i0, i1, f };
+}
+// Level c's colour at column i (taps X) between row offsets j0 and j1 (j1 weighted fy), into out[o], out[o + 1], out[o + 2].
+function lerp(c, X, i, j0, j1, fy, out, o) {
+  const a = 3 * (j0 + X.i0[i]), b = 3 * (j0 + X.i1[i]), d = 3 * (j1 + X.i0[i]), e = 3 * (j1 + X.i1[i]), fx = X.f[i], v = c.col;
+  for (let ch = 0; ch < 3; ch++) out[o + ch] = (v[a + ch] * (1 - fx) + v[b + ch] * fx) * (1 - fy) + (v[d + ch] * (1 - fx) + v[e + ch] * fx) * fy;
+}
+
+// The brushwork beside the holes, carried into them: each known pixel's detail (its colour less the coarse level lo's
+// mean there) is mirrored across the ends of each run of hole pixels, along the rows and then, where the rows left
+// room, along the columns, fading out over the length of the known stretch it mirrors (or of the run). No seam at a
+// hole's edge, and no stretch is ever repeated. The outermost STROKE_EDGE of the picture (a photo's border, the
+// canvas edge) lends nothing. col's known pixels are left holding their detail: only its holes are read back.
+const STROKE_EDGE = 0.015;
+function strokesInto(col, w, h, hole, lo, amount) {
+  const X = taps(w, lo.w), Y = taps(h, lo.h), m = new Float32Array(3), cover = new Float32Array(w * h); // m: lerp stays monomorphic
+  for (let j = 0; j < h; j++) {
+    const j0 = Y.i0[j] * lo.w, j1 = Y.i1[j] * lo.w, fy = Y.f[j];
+    for (let i = 0, k = j * w; i < w; i++, k++) {
+      if (hole[k]) continue;
+      lerp(lo, X, i, j0, j1, fy, m, 0);
+      col[3 * k] -= m[0]; col[3 * k + 1] -= m[1]; col[3 * k + 2] -= m[2];
+    }
+  }
+  strokeLines(col, hole, cover, h, w, w, 1, amount);
+  strokeLines(col, hole, cover, w, h, 1, w, amount);
+}
+// One direction of strokesInto: `lines` lines of n pixels, pixel q of line L at L * lineStep + q * step.
+function strokeLines(col, hole, cover, lines, n, lineStep, step, amount) {
+  const edge = Math.round(STROKE_EDGE * n);
+  for (let L = 0; L < lines; L++) {
+    const base = L * lineStep;
+    for (let i = 0; i < n; i++) {
+      if (!hole[base + i * step]) continue;
+      let e = i, l0 = i, r1;
+      while (e < n && hole[base + e * step]) e++;
+      while (l0 > edge && !hole[base + (l0 - 1) * step]) l0--;
+      for (r1 = e; r1 < n - edge && !hole[base + r1 * step];) r1++;
+      const len = e - i, rl = Math.min(i - l0, len), rr = Math.min(r1 - e, len);
+      for (let q = i; q < e && (rl > 0 || rr > 0); q++) {
+        const p = base + q * step, dl = q - i, dr = e - 1 - q;
+        const wl = rl > 0 ? Math.max(0, 1 - dl / rl) : 0, wr = rr > 0 ? Math.max(0, 1 - dr / rr) : 0, sum = wl + wr;
+        if (!(sum > 0) || cover[p] >= 1) continue;
+        const free = (1 - cover[p]) * amount / Math.max(1, sum), a = 3 * (base + (i - 1 - dl) * step), b = 3 * (base + (e + dr) * step);
+        for (let ch = 0; ch < 3; ch++) col[3 * p + ch] += free * ((wl ? wl * col[a + ch] : 0) + (wr ? wr * col[b + ch] : 0));
+        cover[p] += (1 - cover[p]) * Math.min(1, sum);
+      }
+      i = e;
+    }
+  }
+}
+
 // A moving average of radius r, the ends mirrored through their own value so a straight run stays straight to its end.
 function boxPass(a, r) {
   const n = a.length, at = (q) => (q < 0 ? 2 * a[0] - a[Math.min(n - 1, -q)] : q >= n ? 2 * a[n - 1] - a[Math.max(0, 2 * n - 2 - q)] : a[q]);
